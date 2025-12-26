@@ -1,0 +1,15 @@
+embedding:
+  provider: none
+  model: null
+hooks:
+  pre_prompt:
+    enabled: true
+    timeout_ms: 5000
+    max_tokens: 2000
+  post_session:
+    enabled: true
+    auto_extract: true
+    auto_sync: true
+  post_compact:
+    enabled: true
+    show_reminder: true
