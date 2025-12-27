@@ -18,7 +18,7 @@ use crate::memory::service::{add_memory, add_memory_with_embedding, list_memorie
 use crate::sync::{export_to_jsonl, import_from_jsonl, git_sync};
 use crate::retrieval::context::{get_context, get_context_async, format_context_markdown};
 use crate::retrieval::search::semantic_search;
-use crate::hooks::{install_hooks, list_hooks, test_hook};
+use crate::hooks::{install_hooks, list_hooks, test_hook, detect_installed_agents};
 use crate::memory::extraction::{extract_from_transcript, extract_and_store, read_transcript_file};
 use std::path::Path;
 
@@ -167,9 +167,9 @@ enum MemoryCommands {
 
 #[derive(Subcommand)]
 enum HookCommands {
-    /// Install hooks for an AI agent (claude-code, cursor)
+    /// Install hooks for an AI agent
     Install {
-        /// Agent name: claude-code, cursor
+        /// Agent: claude-code, gemini-cli, codex-cli, cursor
         agent: String,
     },
     /// List installed hooks
@@ -181,6 +181,11 @@ enum HookCommands {
     Test {
         /// Hook type: pre-prompt, post-session
         hook_type: String,
+    },
+    /// Detect which agents are installed on this system
+    Detect {
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -368,6 +373,31 @@ async fn main() -> Result<()> {
                 HookCommands::Test { hook_type } => {
                     let result = test_hook(&hook_type)?;
                     println!("{}", result);
+                },
+                HookCommands::Detect { json } => {
+                    let agents = detect_installed_agents();
+                    if json {
+                        let agent_names: Vec<_> = agents.iter().map(|a| a.cli_name()).collect();
+                        println!("{}", serde_json::to_string_pretty(&agent_names)?);
+                    } else {
+                        if agents.is_empty() {
+                            println!("No supported AI agents detected.");
+                            println!("\nSupported agents:");
+                            println!("  - claude-code (Claude Code CLI)");
+                            println!("  - gemini-cli (Gemini CLI)");
+                            println!("  - codex-cli (Codex CLI)");
+                            println!("  - cursor (Cursor IDE)");
+                        } else {
+                            println!("Detected AI agents:\n");
+                            for agent in &agents {
+                                println!("  {} ({})", agent.display_name(), agent.cli_name());
+                            }
+                            println!("\nTo install hooks:");
+                            for agent in &agents {
+                                println!("  am hook install {}", agent.cli_name());
+                            }
+                        }
+                    }
                 },
             }
         },
