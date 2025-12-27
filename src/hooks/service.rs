@@ -106,11 +106,13 @@ fn install_claude_code_hooks() -> Result<()> {
     // Write hook files
     let pre_prompt_path = hooks_dir.join("pre-prompt.js");
     fs::write(&pre_prompt_path, CLAUDE_PRE_PROMPT_HOOK)?;
+    make_executable(&pre_prompt_path)?;
 
     let post_session_path = hooks_dir.join("post-session.js");
     fs::write(&post_session_path, CLAUDE_POST_SESSION_HOOK)?;
+    make_executable(&post_session_path)?;
 
-    // Configure .claude/settings.json
+    // Configure .claude/settings.json with new matcher-based format
     let settings_dir = PathBuf::from(".claude");
     fs::create_dir_all(&settings_dir)?;
 
@@ -122,13 +124,34 @@ fn install_claude_code_hooks() -> Result<()> {
         json!({})
     };
 
-    // Add hooks configuration
+    // Add hooks configuration with new matcher format
     let hooks = settings.as_object_mut().unwrap()
         .entry("hooks").or_insert_with(|| json!({}));
     let hooks_obj = hooks.as_object_mut().unwrap();
 
-    hooks_obj.insert("UserPromptSubmit".to_string(), json!([".agentmem/hooks/pre-prompt.js"]));
-    hooks_obj.insert("SessionEnd".to_string(), json!([".agentmem/hooks/post-session.js"]));
+    // New format: {"UserPromptSubmit": [{"matcher": {}, "hooks": [{"type": "command", "command": "..."}]}]}
+    hooks_obj.insert("UserPromptSubmit".to_string(), json!([
+        {
+            "matcher": {},
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": "node .agentmem/hooks/pre-prompt.js"
+                }
+            ]
+        }
+    ]));
+    hooks_obj.insert("SessionEnd".to_string(), json!([
+        {
+            "matcher": {},
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": "node .agentmem/hooks/post-session.js"
+                }
+            ]
+        }
+    ]));
 
     fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
 
