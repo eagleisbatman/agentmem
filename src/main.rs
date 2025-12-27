@@ -16,6 +16,8 @@ use crate::db::get_connection;
 use crate::tasks::service::{create_task, list_tasks, get_ready_tasks};
 use crate::memory::service::{add_memory, list_memories, add_protected_file, add_tool};
 use crate::sync::{export_to_jsonl, import_from_jsonl, git_sync};
+use crate::retrieval::context::{get_context, format_context_markdown};
+use crate::hooks::{install_hooks, list_hooks, test_hook};
 use std::path::Path;
 
 #[derive(Parser)]
@@ -92,6 +94,11 @@ enum Commands {
         #[arg(short, long)]
         path: Option<String>,
     },
+    /// Manage hooks for AI agents
+    Hook {
+        #[command(subcommand)]
+        command: HookCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -129,6 +136,25 @@ enum MemoryCommands {
     },
     Search {
         query: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum HookCommands {
+    /// Install hooks for an AI agent (claude-code, cursor)
+    Install {
+        /// Agent name: claude-code, cursor
+        agent: String,
+    },
+    /// List installed hooks
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Test hook execution
+    Test {
+        /// Hook type: pre-prompt, post-session
+        hook_type: String,
     },
 }
 
@@ -218,7 +244,22 @@ fn main() -> Result<()> {
             add_tool(&conn, &location, name, Some(&description), usage.as_deref())?;
             println!("✓ Registered tool: {}", name);
         },
-        Commands::Context { .. } => println!("Context not implemented yet"),
+        Commands::Context { query, task, file, limit_memories, limit_tasks, format, json } => {
+            let db_path = get_db_path();
+            if !db_path.exists() {
+                anyhow::bail!("AgentMem not initialized. Run 'am init' first.");
+            }
+            let conn = get_connection(db_path)?;
+            let context = get_context(&conn, query.as_deref(), task.as_deref(), file.as_deref(), limit_memories, limit_tasks)?;
+            
+            if json || format == "json" {
+                println!("{}", serde_json::to_string_pretty(&context)?);
+            } else if format == "markdown" {
+                println!("{}", format_context_markdown(&context));
+            } else {
+                println!("{}", format_context_markdown(&context));
+            }
+        },
         Commands::Sync { push, message } => {
             let db_path = get_db_path();
             if !db_path.exists() {
@@ -245,6 +286,35 @@ fn main() -> Result<()> {
             let import_path = path.unwrap_or_else(|| ".agentmem/agentmem.jsonl".to_string());
             import_from_jsonl(&conn, import_path)?;
             println!("✓ Imported from JSONL");
+        },
+        Commands::Hook { command } => {
+            let db_path = get_db_path();
+            if !db_path.exists() {
+                anyhow::bail!("AgentMem not initialized. Run 'am init' first.");
+            }
+            match command {
+                HookCommands::Install { agent } => {
+                    install_hooks(&agent)?;
+                },
+                HookCommands::List { json } => {
+                    let hooks = list_hooks()?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&hooks)?);
+                    } else {
+                        if hooks.is_empty() {
+                            println!("No hooks installed. Run 'am hook install <agent>' first.");
+                        } else {
+                            for h in hooks {
+                                println!("{}: {} ({})", h.name, h.path, h.hook_type);
+                            }
+                        }
+                    }
+                },
+                HookCommands::Test { hook_type } => {
+                    let result = test_hook(&hook_type)?;
+                    println!("{}", result);
+                },
+            }
         },
     }
 

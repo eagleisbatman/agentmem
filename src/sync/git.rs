@@ -1,6 +1,5 @@
 use std::process::Command;
 use anyhow::{Result, Context};
-use std::path::Path;
 
 pub fn git_sync(push: bool, message: Option<&str>) -> Result<()> {
     let msg = message.unwrap_or("agentmem: sync");
