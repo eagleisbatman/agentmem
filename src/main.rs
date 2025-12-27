@@ -119,6 +119,12 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Check system health and dependencies
+    Doctor {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -410,6 +416,190 @@ async fn main() -> Result<()> {
                 }
             }
         },
+        Commands::Doctor { json } => {
+            run_doctor(json).await?;
+        },
+    }
+
+    Ok(())
+}
+
+/// Run health check diagnostics
+async fn run_doctor(json_output: bool) -> Result<()> {
+    use std::process::Command;
+
+    #[derive(serde::Serialize)]
+    struct HealthCheck {
+        component: String,
+        status: String,
+        details: Option<String>,
+    }
+
+    let mut checks: Vec<HealthCheck> = Vec::new();
+
+    if !json_output {
+        println!();
+        println!("AgentMem Health Check");
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        println!();
+    }
+
+    // Check 1: .agentmem directory
+    let am_dir = crate::config::get_agentmem_dir();
+    let am_exists = am_dir.exists();
+    checks.push(HealthCheck {
+        component: "Project initialized".to_string(),
+        status: if am_exists { "ok" } else { "missing" }.to_string(),
+        details: Some(am_dir.display().to_string()),
+    });
+    if !json_output {
+        println!("  {} Project initialized ({})",
+            if am_exists { "✓" } else { "✗" },
+            am_dir.display());
+    }
+
+    // Check 2: Database
+    let db_path = crate::config::get_db_path();
+    let db_exists = db_path.exists();
+    checks.push(HealthCheck {
+        component: "Database".to_string(),
+        status: if db_exists { "ok" } else { "missing" }.to_string(),
+        details: Some(db_path.display().to_string()),
+    });
+    if !json_output {
+        println!("  {} Database ({})",
+            if db_exists { "✓" } else { "✗" },
+            db_path.display());
+    }
+
+    // Check 3: Docker installed
+    let docker_installed = Command::new("docker")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    checks.push(HealthCheck {
+        component: "Docker".to_string(),
+        status: if docker_installed { "ok" } else { "missing" }.to_string(),
+        details: None,
+    });
+    if !json_output {
+        println!("  {} Docker installed",
+            if docker_installed { "✓" } else { "✗" });
+    }
+
+    // Check 4: Docker running
+    let docker_running = docker_installed && Command::new("docker")
+        .arg("info")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if docker_installed {
+        checks.push(HealthCheck {
+            component: "Docker daemon".to_string(),
+            status: if docker_running { "ok" } else { "not running" }.to_string(),
+            details: None,
+        });
+        if !json_output {
+            println!("  {} Docker daemon running",
+                if docker_running { "✓" } else { "✗" });
+        }
+    }
+
+    // Check 5: Qdrant container
+    let qdrant_running = docker_running && Command::new("docker")
+        .args(["ps", "--format", "{{.Names}}"])
+        .output()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .any(|name| name == "agentmem-qdrant")
+        })
+        .unwrap_or(false);
+    checks.push(HealthCheck {
+        component: "Qdrant".to_string(),
+        status: if qdrant_running { "ok" } else { "not running" }.to_string(),
+        details: Some("localhost:6334".to_string()),
+    });
+    if !json_output {
+        println!("  {} Qdrant container (localhost:6334)",
+            if qdrant_running { "✓" } else { "✗" });
+    }
+
+    // Check 6: OpenAI API key
+    let openai_key = std::env::var("OPENAI_API_KEY").ok()
+        .or_else(|| {
+            let creds_path = dirs::home_dir()?.join(".agentmem").join("credentials");
+            std::fs::read_to_string(creds_path).ok()
+                .and_then(|content| {
+                    content.lines()
+                        .find(|l| l.starts_with("OPENAI_API_KEY="))
+                        .map(|l| l.strip_prefix("OPENAI_API_KEY=").unwrap_or("").to_string())
+                })
+        });
+    let has_openai = openai_key.as_ref().map(|k| !k.is_empty()).unwrap_or(false);
+    checks.push(HealthCheck {
+        component: "OpenAI API key".to_string(),
+        status: if has_openai { "ok" } else { "missing" }.to_string(),
+        details: if has_openai { Some("configured".to_string()) } else { None },
+    });
+    if !json_output {
+        println!("  {} OpenAI API key",
+            if has_openai { "✓" } else { "✗" });
+    }
+
+    // Check 7: Hooks installed
+    let hooks_dir = am_dir.join("hooks");
+    let hooks_count = if hooks_dir.exists() {
+        std::fs::read_dir(&hooks_dir)
+            .map(|entries| entries.filter(|e| e.is_ok()).count())
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    checks.push(HealthCheck {
+        component: "Hooks".to_string(),
+        status: if hooks_count > 0 { "ok" } else { "none" }.to_string(),
+        details: Some(format!("{} installed", hooks_count)),
+    });
+    if !json_output {
+        println!("  {} Hooks ({} installed)",
+            if hooks_count > 0 { "✓" } else { "!" },
+            hooks_count);
+    }
+
+    // Summary
+    let all_ok = am_exists && db_exists && qdrant_running && has_openai;
+
+    if json_output {
+        println!("{}", serde_json::json!({
+            "healthy": all_ok,
+            "checks": checks
+        }));
+    } else {
+        println!();
+        if all_ok {
+            println!("  Status: All systems operational");
+        } else {
+            println!("  Status: Some components need attention");
+            println!();
+            if !docker_installed {
+                println!("  Fix: Install Docker from https://docker.com");
+            }
+            if docker_installed && !docker_running {
+                println!("  Fix: Start Docker Desktop or docker daemon");
+            }
+            if docker_running && !qdrant_running {
+                println!("  Fix: Run 'docker start agentmem-qdrant' or 'am init'");
+            }
+            if !has_openai {
+                println!("  Fix: Set OPENAI_API_KEY or run 'am init'");
+            }
+            if !am_exists {
+                println!("  Fix: Run 'am init' in your project directory");
+            }
+        }
+        println!();
     }
 
     Ok(())

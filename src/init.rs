@@ -1,19 +1,218 @@
 use std::fs;
+use std::io::{self, Write};
+use std::process::Command;
+use std::path::PathBuf;
 use anyhow::{Result, Context};
 use crate::config::{Config, get_agentmem_dir, get_config_path, get_db_path, save_config};
 use crate::db::get_connection;
 
+/// Global credentials directory
+fn get_global_config_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".agentmem")
+}
+
+/// Global credentials file path
+fn get_credentials_path() -> PathBuf {
+    get_global_config_dir().join("credentials")
+}
+
+/// Check if Docker is installed
+fn check_docker_installed() -> bool {
+    Command::new("docker")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Check if Docker daemon is running
+fn check_docker_running() -> bool {
+    Command::new("docker")
+        .arg("info")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Check if Qdrant container exists
+fn check_qdrant_container_exists() -> bool {
+    Command::new("docker")
+        .args(["ps", "-a", "--format", "{{.Names}}"])
+        .output()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .any(|name| name == "agentmem-qdrant")
+        })
+        .unwrap_or(false)
+}
+
+/// Check if Qdrant container is running
+fn check_qdrant_running() -> bool {
+    Command::new("docker")
+        .args(["ps", "--format", "{{.Names}}"])
+        .output()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .any(|name| name == "agentmem-qdrant")
+        })
+        .unwrap_or(false)
+}
+
+/// Start existing Qdrant container
+fn start_qdrant_container() -> Result<()> {
+    Command::new("docker")
+        .args(["start", "agentmem-qdrant"])
+        .output()
+        .context("Failed to start Qdrant container")?;
+    Ok(())
+}
+
+/// Create and start new Qdrant container
+fn create_qdrant_container() -> Result<()> {
+    let output = Command::new("docker")
+        .args([
+            "run", "-d",
+            "--name", "agentmem-qdrant",
+            "-p", "6333:6333",
+            "-p", "6334:6334",
+            "-v", "agentmem-qdrant-data:/qdrant/storage",
+            "qdrant/qdrant:latest"
+        ])
+        .output()
+        .context("Failed to create Qdrant container")?;
+
+    if !output.status.success() {
+        anyhow::bail!("Failed to create Qdrant container: {}",
+            String::from_utf8_lossy(&output.stderr));
+    }
+    Ok(())
+}
+
+/// Wait for Qdrant to be healthy
+fn wait_for_qdrant(timeout_secs: u64) -> bool {
+    for _ in 0..timeout_secs {
+        if let Ok(output) = Command::new("curl")
+            .args(["-s", "http://localhost:6333/health"])
+            .output()
+        {
+            if output.status.success() {
+                return true;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    false
+}
+
+/// Check if OpenAI API key is available
+fn get_openai_key() -> Option<String> {
+    // 1. Check environment variable
+    if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+        if !key.is_empty() {
+            return Some(key);
+        }
+    }
+
+    // 2. Check credentials file
+    let creds_path = get_credentials_path();
+    if creds_path.exists() {
+        if let Ok(content) = fs::read_to_string(&creds_path) {
+            for line in content.lines() {
+                if let Some(key) = line.strip_prefix("OPENAI_API_KEY=") {
+                    if !key.is_empty() {
+                        return Some(key.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Prompt user for OpenAI API key
+fn prompt_openai_key() -> Result<Option<String>> {
+    println!();
+    println!("AgentMem uses OpenAI for embeddings and memory extraction.");
+    println!("Get your API key from: https://platform.openai.com/api-keys");
+    println!();
+    print!("Enter your OpenAI API key (or press Enter to skip): ");
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let key = input.trim();
+
+    if key.is_empty() {
+        return Ok(None);
+    }
+
+    // Validate key format
+    if !key.starts_with("sk-") {
+        println!("Warning: API key doesn't start with 'sk-'. Saving anyway.");
+    }
+
+    // Save to credentials file
+    let global_dir = get_global_config_dir();
+    fs::create_dir_all(&global_dir)?;
+
+    let creds_path = get_credentials_path();
+    fs::write(&creds_path, format!("OPENAI_API_KEY={}\n", key))?;
+
+    // Set restrictive permissions (Unix only)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&creds_path, fs::Permissions::from_mode(0o600))?;
+    }
+
+    // Also set environment variable for current session
+    std::env::set_var("OPENAI_API_KEY", key);
+
+    Ok(Some(key.to_string()))
+}
+
+/// Interactive prompt for yes/no
+fn prompt_yes_no(question: &str, default: bool) -> bool {
+    let suffix = if default { "[Y/n]" } else { "[y/N]" };
+    print!("{} {} ", question, suffix);
+    io::stdout().flush().ok();
+
+    let mut input = String::new();
+    if io::stdin().read_line(&mut input).is_err() {
+        return default;
+    }
+
+    match input.trim().to_lowercase().as_str() {
+        "y" | "yes" => true,
+        "n" | "no" => false,
+        "" => default,
+        _ => default,
+    }
+}
+
 pub fn run_init(quiet: bool, embedding: Option<String>, model: Option<String>) -> Result<()> {
     let am_dir = get_agentmem_dir();
-    
+
+    if !quiet {
+        println!();
+        println!("Initializing AgentMem...");
+        println!();
+    }
+
+    // Step 1: Create .agentmem directory
     if am_dir.exists() {
         if !quiet {
-            println!(".agentmem directory already exists. Re-initializing...");
+            println!("  .agentmem directory already exists. Re-initializing...");
         }
     } else {
         fs::create_dir_all(&am_dir).context("Failed to create .agentmem directory")?;
         if !quiet {
-            println!("✓ Created .agentmem/");
+            println!("  {} Created .agentmem/", "✓");
         }
     }
 
@@ -26,42 +225,153 @@ pub fn run_init(quiet: bool, embedding: Option<String>, model: Option<String>) -
     // Create .gitignore
     let gitignore_path = am_dir.join(".gitignore");
     if !gitignore_path.exists() {
-        fs::write(gitignore_path, "*.db\n").context("Failed to create .gitignore")?;
+        fs::write(&gitignore_path, "*.db\nhooks/\n").context("Failed to create .gitignore")?;
     }
 
-    // Create config.yaml
-    let config_path = get_config_path();
-    if !config_path.exists() {
-        let mut config = Config::default();
-        if let Some(provider) = embedding {
-            config.embedding.provider = provider;
+    // Step 2: Check Docker and Qdrant
+    if !quiet {
+        println!();
+        println!("Checking dependencies...");
+    }
+
+    let docker_installed = check_docker_installed();
+    let docker_running = docker_installed && check_docker_running();
+
+    if !quiet {
+        if docker_installed {
+            println!("  {} Docker installed", "✓");
+            if docker_running {
+                println!("  {} Docker daemon running", "✓");
+            } else {
+                println!("  {} Docker daemon not running", "!");
+            }
+        } else {
+            println!("  {} Docker not installed (required for semantic search)", "!");
         }
-        if let Some(m) = model {
-            config.embedding.model = Some(m);
+    }
+
+    // Handle Qdrant setup
+    let mut qdrant_running = false;
+    if docker_running {
+        if check_qdrant_running() {
+            qdrant_running = true;
+            if !quiet {
+                println!("  {} Qdrant container running", "✓");
+            }
+        } else if check_qdrant_container_exists() {
+            if !quiet {
+                println!("  Starting existing Qdrant container...");
+            }
+            start_qdrant_container()?;
+            if wait_for_qdrant(10) {
+                qdrant_running = true;
+                if !quiet {
+                    println!("  {} Qdrant started", "✓");
+                }
+            }
+        } else if !quiet {
+            // Ask to start Qdrant
+            println!();
+            if prompt_yes_no("Start Qdrant container for semantic search?", true) {
+                println!("  Starting Qdrant (this may take a moment on first run)...");
+                if let Err(e) = create_qdrant_container() {
+                    println!("  {} Failed to start Qdrant: {}", "!", e);
+                } else if wait_for_qdrant(30) {
+                    qdrant_running = true;
+                    println!("  {} Qdrant started", "✓");
+                } else {
+                    println!("  {} Qdrant may still be starting up", "!");
+                }
+            }
         }
-        save_config(&config_path, &config).context("Failed to save config.yaml")?;
+    }
+
+    // Step 3: Check OpenAI API key
+    let embedding_provider = embedding.clone().unwrap_or_else(|| {
+        if get_openai_key().is_some() {
+            "openai".to_string()
+        } else {
+            "none".to_string()
+        }
+    });
+
+    if embedding_provider != "none" && get_openai_key().is_none() {
         if !quiet {
-            println!("✓ Created config.yaml");
+            match prompt_openai_key()? {
+                Some(_) => println!("  {} OpenAI API key saved", "✓"),
+                None => {
+                    println!("  {} Skipped OpenAI setup. Semantic search disabled.", "!");
+                }
+            }
         }
+    } else if !quiet && get_openai_key().is_some() {
+        println!("  {} OpenAI API key found", "✓");
     }
 
-    // Initialize database
+    // Step 4: Create config.yaml
+    let config_path = get_config_path();
+    let config_exists = config_path.exists();
+
+    let mut config = if config_exists {
+        crate::config::load_config(&config_path).unwrap_or_default()
+    } else {
+        Config::default()
+    };
+
+    // Update embedding provider
+    if let Some(provider) = embedding {
+        config.embedding.provider = provider;
+    } else if get_openai_key().is_some() && config.embedding.provider == "none" {
+        config.embedding.provider = "openai".to_string();
+    }
+
+    if let Some(m) = model {
+        config.embedding.model = Some(m);
+    }
+
+    save_config(&config_path, &config).context("Failed to save config.yaml")?;
+    if !quiet && !config_exists {
+        println!("  {} Created config.yaml", "✓");
+    }
+
+    // Step 5: Initialize database
     let db_path = get_db_path();
     let _conn = get_connection(db_path).context("Failed to initialize database")?;
     if !quiet {
-        println!("✓ Initialized database");
+        println!("  {} Initialized database", "✓");
     }
 
     // Create agentmem.jsonl (placeholder if doesn't exist)
     let jsonl_path = am_dir.join("agentmem.jsonl");
     if !jsonl_path.exists() {
-        fs::write(jsonl_path, "").context("Failed to create agentmem.jsonl")?;
+        fs::write(&jsonl_path, "").context("Failed to create agentmem.jsonl")?;
     }
 
+    // Step 6: Print success message
     if !quiet {
-        println!("✓ AgentMem initialized successfully!");
+        println!();
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        println!("  AgentMem initialized successfully!");
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        println!();
+        println!("  Next steps:");
+        println!();
+        println!("  1. Install hooks for your AI agent:");
+        println!("     am hook install claude-code");
+        println!();
+        println!("  2. Add your first memory:");
+        println!("     am mem add decision \"Use PostgreSQL\" --content \"For JSON support\"");
+        println!();
+        println!("  3. Check system health:");
+        println!("     am doctor");
+        println!();
+
+        if !qdrant_running {
+            println!("  Note: Semantic search is disabled (Qdrant not running).");
+            println!("        Run 'docker start agentmem-qdrant' to enable it.");
+            println!();
+        }
     }
 
     Ok(())
 }
-
