@@ -71,22 +71,45 @@ module.exports = {
 "#;
 
 /// Post-session hook template for Claude Code
-/// This hook runs after session end for memory extraction and sync (stub for now)
+/// This hook runs after session end for memory extraction and sync
 pub const POST_SESSION_HOOK: &str = r#"const { spawn } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 module.exports = {
   event: 'SessionEnd',
 
-  async handler({ sessionId }) {
+  async handler({ transcript, sessionId }) {
     try {
+      // Write transcript to temp file if provided
+      if (transcript && Array.isArray(transcript) && transcript.length > 0) {
+        const tempDir = os.tmpdir();
+        const transcriptFile = path.join(tempDir, `am-transcript-${sessionId || Date.now()}.jsonl`);
+
+        // Write transcript as JSONL
+        const content = transcript
+          .map(msg => JSON.stringify(msg))
+          .join('\n');
+        fs.writeFileSync(transcriptFile, content);
+
+        // Extract memories (non-blocking)
+        spawn('am', ['extract', '--transcript', transcriptFile], {
+          detached: true,
+          stdio: 'ignore'
+        }).unref();
+
+        // Clean up temp file after a delay
+        setTimeout(() => {
+          try { fs.unlinkSync(transcriptFile); } catch (e) {}
+        }, 60000);
+      }
+
       // Sync to git (non-blocking)
       spawn('am', ['sync'], {
         detached: true,
         stdio: 'ignore'
       }).unref();
-
-      // Note: Memory extraction will be added in a future phase
-      // spawn('am', ['extract', '--transcript', tempFile], { ... });
 
     } catch (error) {
       console.error('AgentMem post-session error:', error.message);

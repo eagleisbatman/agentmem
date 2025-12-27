@@ -19,6 +19,7 @@ use crate::sync::{export_to_jsonl, import_from_jsonl, git_sync};
 use crate::retrieval::context::{get_context, get_context_async, format_context_markdown};
 use crate::retrieval::search::semantic_search;
 use crate::hooks::{install_hooks, list_hooks, test_hook};
+use crate::memory::extraction::{extract_from_transcript, extract_and_store, read_transcript_file};
 use std::path::Path;
 
 #[derive(Parser)]
@@ -99,6 +100,24 @@ enum Commands {
     Hook {
         #[command(subcommand)]
         command: HookCommands,
+    },
+    /// Extract memories from session transcript
+    Extract {
+        /// Path to transcript file (JSONL or plain text)
+        #[arg(long)]
+        transcript: String,
+        /// LLM model to use for extraction
+        #[arg(long, default_value = "gpt-4o")]
+        model: String,
+        /// Skip deduplication
+        #[arg(long)]
+        no_dedupe: bool,
+        /// Dry run - show what would be extracted without storing
+        #[arg(long)]
+        dry_run: bool,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -344,6 +363,51 @@ async fn main() -> Result<()> {
                     let result = test_hook(&hook_type)?;
                     println!("{}", result);
                 },
+            }
+        },
+        Commands::Extract { transcript, model, no_dedupe, dry_run, json } => {
+            let db_path = get_db_path();
+            if !db_path.exists() {
+                anyhow::bail!("AgentMem not initialized. Run 'am init' first.");
+            }
+
+            // Read transcript file
+            let transcript_content = read_transcript_file(&transcript)?;
+
+            if dry_run {
+                // Dry run - just show what would be extracted
+                let result = extract_from_transcript(&transcript_content, &model).await?;
+
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                } else {
+                    if result.memories.is_empty() {
+                        println!("No memories extracted from transcript.");
+                    } else {
+                        println!("Would extract {} memories:\n", result.memories.len());
+                        for m in &result.memories {
+                            println!("[{}] {} (confidence: {})", m.memory_type, m.title, m.confidence);
+                            println!("  Content: {}", m.content);
+                            println!("  Reasoning: {}", m.reasoning);
+                            println!();
+                        }
+                    }
+                }
+            } else {
+                // Actually extract and store
+                let conn = get_connection(db_path)?;
+                let stats = extract_and_store(&conn, &transcript_content, &model, !no_dedupe).await?;
+
+                if json {
+                    println!("{}", serde_json::json!({
+                        "extracted": stats.extracted,
+                        "stored": stats.stored,
+                        "duplicates": stats.duplicates
+                    }));
+                } else {
+                    println!("Extracted {} memories from transcript.", stats.extracted);
+                    println!("Stored {} new memories ({} duplicates skipped).", stats.stored, stats.duplicates);
+                }
             }
         },
     }

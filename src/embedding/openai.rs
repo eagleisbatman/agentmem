@@ -1,7 +1,10 @@
 use anyhow::{Context, Result};
 use async_openai::{
     config::OpenAIConfig,
-    types::{CreateEmbeddingRequestArgs, EmbeddingInput},
+    types::{
+        ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestUserMessageArgs,
+        CreateChatCompletionRequestArgs, CreateEmbeddingRequestArgs, EmbeddingInput,
+    },
     Client,
 };
 use async_trait::async_trait;
@@ -103,4 +106,52 @@ impl EmbeddingProvider for OpenAIProvider {
     fn dimensions(&self) -> usize {
         self.dimensions
     }
+}
+
+/// Standalone chat completion function for use outside the provider
+/// Reads API key from OPENAI_API_KEY environment variable
+pub async fn chat_completion(
+    model: &str,
+    system_prompt: &str,
+    user_prompt: &str,
+) -> Result<String> {
+    // Check for API key
+    std::env::var("OPENAI_API_KEY")
+        .context("OPENAI_API_KEY environment variable not set")?;
+
+    let client: Client<OpenAIConfig> = Client::new();
+
+    let request = CreateChatCompletionRequestArgs::default()
+        .model(model)
+        .messages([
+            ChatCompletionRequestSystemMessageArgs::default()
+                .content(system_prompt)
+                .build()
+                .context("Failed to build system message")?
+                .into(),
+            ChatCompletionRequestUserMessageArgs::default()
+                .content(user_prompt)
+                .build()
+                .context("Failed to build user message")?
+                .into(),
+        ])
+        .build()
+        .context("Failed to build chat completion request")?;
+
+    let response = client
+        .chat()
+        .create(request)
+        .await
+        .context("Failed to create chat completion")?;
+
+    let content = response
+        .choices
+        .first()
+        .context("No response from model")?
+        .message
+        .content
+        .clone()
+        .unwrap_or_default();
+
+    Ok(content)
 }
