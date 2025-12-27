@@ -1,163 +1,331 @@
 # AgentMem Roadmap
 
-Persistent memory for AI coding agents. This roadmap outlines completed work and planned features.
+> **Vision**: A dependable memory system for AI-assisted software development, covering the complete lifecycle from architecture to deployment.
+
+---
+
+## Target Users
+
+- **Developers** - Individual contributors using AI coding agents daily
+- **Architects** - Technical leads designing systems across sessions
+- **Product Managers** - Non-technical users leveraging AI for specs and planning
+- **QA Engineers** - Testing workflows with AI assistance
+- **DevOps** - Deployment and infrastructure automation
+
+---
+
+## Supported AI Agents (MVP)
+
+| Agent | Platform | Status |
+|-------|----------|--------|
+| Claude Code | CLI | ✅ Supported |
+| Gemini CLI | CLI | 🔲 Planned |
+| Codex CLI | CLI | 🔲 Planned |
+| Cursor | IDE | 🔲 Planned |
+
+---
+
+## Technology Stack
+
+| Component | Technology | Notes |
+|-----------|------------|-------|
+| Storage | SQLite | Local, portable |
+| Vector DB | Qdrant | Docker-based, auto-installed |
+| Embeddings | OpenAI | text-embedding-3-small |
+| Extraction | GPT-4o | Memory extraction from transcripts |
+| Dashboard | ShadCN/UI | Jet black/white, line icons |
+| Deployment | Railway.com | One-click deploy |
 
 ---
 
 ## Completed
 
-### Phase 1: Core Foundation
-- [x] CLI tool (`am`) with clap
-- [x] SQLite storage for tasks, memories, protected files, tools
-- [x] Task management (create, list, ready)
-- [x] Memory CRUD operations
-- [x] Git sync (export/import JSONL)
-- [x] Configuration system (YAML)
+### Phase 1: Core Foundation ✅
+- CLI tool (`am`) with intuitive commands
+- SQLite storage for tasks, memories, protected files, tools
+- Git-based sync (JSONL export/import)
+- YAML configuration
 
-### Phase 2: Hooks & Context Injection
-- [x] Pre-prompt hook for Claude Code (UserPromptSubmit)
-- [x] Post-session hook for sync (SessionEnd)
-- [x] `am hook install claude-code` command
-- [x] Context formatting (markdown/JSON)
-- [x] Protected file warnings in context
+### Phase 2: Claude Code Integration ✅
+- Pre-prompt hook (context injection)
+- Post-session hook (auto-sync)
+- Protected file warnings
+- Markdown/JSON context formatting
 
-### Phase 3: Embeddings & Semantic Search
-- [x] EmbeddingProvider trait (pluggable providers)
-- [x] OpenAI embeddings (text-embedding-3-small)
-- [x] Qdrant vector store integration
-- [x] `am mem search <query>` semantic search
-- [x] Fallback to LIKE search when Qdrant unavailable
+### Phase 3: Semantic Search ✅
+- OpenAI embeddings integration
+- Qdrant vector store
+- Similarity-based memory retrieval
+- Graceful fallback when Qdrant unavailable
 
-### Phase 4: Automatic Memory Extraction
-- [x] GPT-4o integration for transcript analysis
-- [x] `am extract --transcript <file>` command
-- [x] 8 memory types (correction, decision, gotcha, etc.)
-- [x] Automatic deduplication (>0.9 similarity threshold)
-- [x] Post-session hook integration
+### Phase 4: Memory Extraction ✅
+- GPT-4o transcript analysis
+- 8 memory types (correction, decision, gotcha, etc.)
+- Automatic deduplication
+- JSONL and plain text support
 
 ---
 
-## In Progress
+## MVP Roadmap
 
-### Phase 5: Entity Extraction & Linking
-Extract and link entities (people, services, files) from memories for relationship queries.
+### Phase 5: One-Command Installation
+Seamless setup experience for new users.
+
+```bash
+# Install AgentMem globally
+curl -sSL https://agentmem.dev/install.sh | bash
+
+# Initialize in project (auto-installs Docker + Qdrant)
+am init
+```
 
 **Features:**
-- [ ] Entity extraction during memory creation
-- [ ] Entity types: person, service, file, endpoint, database
-- [ ] Relationship graph (memory <-> entity links)
-- [ ] `am entity list` - list all entities
-- [ ] `am entity search <name>` - find memories by entity
-- [ ] Context enrichment with related entities
+- [ ] Install script for macOS/Linux
+- [ ] Docker detection and auto-install prompt
+- [ ] Qdrant container auto-start
+- [ ] OpenAI key setup wizard
+  - [ ] Read from `~/.agentmem/credentials`
+  - [ ] Environment variable fallback
+  - [ ] Interactive prompt if missing
+- [ ] Health check (`am doctor`)
+- [ ] Uninstall script
 
-**Use cases:**
-- "What did we decide about the auth service?"
-- "Show memories related to database migrations"
+**User Experience:**
+```
+$ am init
+
+🔍 Checking dependencies...
+  ✓ Docker installed
+  ✓ Qdrant container running
+  ✗ OpenAI API key not found
+
+📝 Enter your OpenAI API key: sk-...
+  ✓ Key saved to ~/.agentmem/credentials
+
+✨ AgentMem initialized! Run 'am hook install claude-code' to get started.
+```
 
 ---
 
-## Planned
-
-### Phase 6: Memory Lifecycle Management
-Intelligent memory decay, consolidation, and relevance scoring.
-
-**Features:**
-- [ ] Relevance scoring (recency, recall frequency, confidence)
-- [ ] Memory consolidation (merge similar memories)
-- [ ] Automatic archival of stale memories
-- [ ] `am mem prune` - archive low-relevance memories
-- [ ] `am mem consolidate` - merge duplicates
-- [ ] Configurable retention policies
-
-### Phase 7: Additional Embedding Providers
-Support local and alternative embedding providers.
-
-**Providers:**
-- [ ] Ollama (local, privacy-focused)
-- [ ] Google Gemini
-- [ ] Voyage AI
-- [ ] Cohere
-
-**Features:**
-- [ ] `am init --embedding ollama --model nomic-embed-text`
-- [ ] Automatic provider detection
-- [ ] Embedding migration between providers
-
-### Phase 8: Multi-Agent Support
-Extend hook system to support additional AI coding agents.
+### Phase 6: Multi-Agent Support
+Extend to all primary AI coding agents.
 
 **Agents:**
-- [ ] Cursor (custom hook format)
-- [ ] Windsurf
-- [ ] Cody (Sourcegraph)
-- [ ] Continue.dev
-- [ ] Aider
+- [ ] **Gemini CLI** - Google's AI assistant
+- [ ] **Codex CLI** - OpenAI's coding agent
+- [ ] **Cursor** - IDE with AI integration
 
 **Features:**
+- [ ] `am hook install gemini-cli`
+- [ ] `am hook install codex-cli`
 - [ ] `am hook install cursor`
 - [ ] Agent-specific context formatting
-- [ ] Unified transcript format
+- [ ] Unified transcript format across agents
+- [ ] Auto-detection of installed agents
 
-### Phase 9: Team Collaboration
+---
+
+### Phase 7: Full SDLC Memory Types
+Memories tailored to each development phase.
+
+**Architecture & Design:**
+- [ ] `architecture` - System design decisions
+- [ ] `api-contract` - API specifications
+- [ ] `data-model` - Database schemas
+- [ ] `requirement` - Product requirements
+
+**Development:**
+- [ ] `correction` - Agent mistakes to avoid (existing)
+- [ ] `decision` - Technical choices (existing)
+- [ ] `pattern` - Code patterns and conventions
+- [ ] `gotcha` - Pitfalls and edge cases (existing)
+
+**Code Review:**
+- [ ] `review-feedback` - PR review comments
+- [ ] `style-guide` - Coding standards
+- [ ] `security` - Security considerations
+
+**QA & Testing:**
+- [ ] `test-case` - Important test scenarios
+- [ ] `bug` - Known issues and fixes
+- [ ] `regression` - Things that broke before
+
+**Deployment:**
+- [ ] `infrastructure` - Deployment configs (existing)
+- [ ] `env-config` - Environment variables
+- [ ] `runbook` - Operational procedures
+
+**Platform-Specific:**
+- [ ] Mobile app memories (iOS, Android, React Native, Flutter)
+- [ ] Web app memories (React, Vue, Next.js, etc.)
+- [ ] Backend memories (Node, Python, Go, Rust, etc.)
+
+---
+
+### Phase 8: Team Collaboration
 Share memories across team members.
 
 **Features:**
-- [ ] Team sync via git remote
-- [ ] Conflict resolution for memories
+- [ ] Git remote sync (`am sync --push`)
+- [ ] Team namespaces (personal vs shared)
 - [ ] User attribution on memories
-- [ ] `am sync --team` - push to shared remote
-- [ ] Privacy controls (personal vs shared memories)
-- [ ] Memory namespaces (project, team, personal)
+- [ ] Conflict resolution
+- [ ] Memory visibility controls (private/team/public)
 
-### Phase 10: Web Dashboard
-Visual interface for browsing and managing memories.
+**Workflow:**
+```bash
+# Developer A adds a memory
+am mem add decision "Use PostgreSQL for main database" \
+  --content "Chose Postgres over MySQL for JSON support"
 
-**Features:**
-- [ ] Local web server (`am serve`)
-- [ ] Memory browser with search
-- [ ] Entity relationship graph visualization
-- [ ] Task board view
-- [ ] Memory editor
-- [ ] Analytics (memory growth, recall frequency)
+# Sync to team
+am sync --push
+
+# Developer B pulls team memories
+am sync --pull
+
+# Context now includes team knowledge
+am context --query "database"
+```
 
 ---
 
-## Future Ideas
+### Phase 9: Web Dashboard
+Beautiful, minimal interface for memory management.
 
-These are exploratory features that may be developed based on user feedback.
+**Design System:**
+- [ ] ShadCN/UI components
+- [ ] Jet black theme (default)
+- [ ] Jet white theme (light mode)
+- [ ] Lucide line icons
+- [ ] Minimal, focused UI
+- [ ] Responsive (desktop-first)
 
-### Advanced Retrieval
+**Features:**
+- [ ] `am serve` - Start local dashboard
+- [ ] Memory browser with search
+- [ ] Memory editor (add/edit/delete)
+- [ ] Task board view
+- [ ] Protected files manager
+- [ ] Tools registry
+- [ ] Entity relationship graph
+- [ ] Activity timeline
+- [ ] Team sync status
+
+**Screens:**
+1. **Dashboard** - Overview, recent memories, active tasks
+2. **Memories** - Browse, search, filter by type
+3. **Tasks** - Kanban-style task board
+4. **Settings** - Config, agents, team sync
+
+---
+
+### Phase 10: Beautiful Documentation
+Comprehensive docs for all user types.
+
+**Documentation Site:**
+- [ ] Docusaurus or Nextra-based
+- [ ] Clean, readable design
+- [ ] Dark/light mode
+- [ ] Full-text search
+- [ ] Copy-paste code blocks
+
+**Content:**
+
+**Getting Started:**
+- [ ] Quick start (5 minutes)
+- [ ] Installation guide
+- [ ] First memory tutorial
+- [ ] Video walkthrough
+
+**User Guides:**
+- [ ] For Developers
+- [ ] For Product Managers
+- [ ] For Architects
+- [ ] For QA Engineers
+
+**Workflow Guides:**
+- [ ] Architecture design with AgentMem
+- [ ] Code review workflow
+- [ ] QA and testing workflow
+- [ ] Deployment workflow
+- [ ] Mobile app development
+- [ ] Web app development
+
+**Reference:**
+- [ ] CLI command reference
+- [ ] Memory types reference
+- [ ] Configuration reference
+- [ ] API reference (for integrations)
+
+**Integration Guides:**
+- [ ] Claude Code setup
+- [ ] Gemini CLI setup
+- [ ] Codex CLI setup
+- [ ] Cursor setup
+
+**Deployment:**
+- [ ] Railway.com deployment
+- [ ] Self-hosted setup
+- [ ] Team setup
+
+---
+
+## Post-MVP Ideas
+
+### Advanced Features
+- Memory consolidation (merge similar memories)
+- Memory decay (archive stale memories)
 - Hybrid search (semantic + keyword + recency)
-- Query rewriting for better recall
-- Multi-hop reasoning over memories
-
-### IDE Extensions
-- VS Code extension for inline context
-- JetBrains plugin
-- Neovim integration
-
-### Memory Sources
-- Import from Notion, Confluence, Slack
-- GitHub issue/PR integration
-- Meeting transcript import
-
-### AI Improvements
-- Fine-tuned extraction model
-- Self-improving prompts based on feedback
 - Memory quality scoring
 
-### Enterprise Features
+### Additional Integrations
+- Notion import
+- Confluence import
+- Slack thread import
+- GitHub issue/PR sync
+
+### Enterprise (Future)
 - SSO integration
 - Audit logging
-- Role-based access control
+- Role-based access
 - On-premise deployment
+
+---
+
+## Success Metrics
+
+| Metric | Target |
+|--------|--------|
+| Setup time | < 5 minutes |
+| First memory | < 1 minute after setup |
+| Context retrieval | < 500ms |
+| Documentation completeness | 100% command coverage |
+| Agent support | 4 agents (Claude, Gemini, Codex, Cursor) |
+
+---
+
+## Release Plan
+
+| Version | Milestone | Focus |
+|---------|-----------|-------|
+| v0.1 | Alpha | Core CLI + Claude Code |
+| v0.2 | Beta | One-command install + Qdrant |
+| v0.3 | Beta | Multi-agent support |
+| v0.4 | Beta | SDLC memory types |
+| v0.5 | Beta | Team collaboration |
+| v0.6 | RC | Web dashboard |
+| v1.0 | Release | Documentation + Polish |
 
 ---
 
 ## Contributing
 
-Want to help? Pick an item from the roadmap and open a PR. For major features, open an issue first to discuss the approach.
+1. Pick an item from the roadmap
+2. Open an issue to discuss approach
+3. Submit a PR
+4. Get featured in contributors list
 
 ## Feedback
 
-Have ideas for the roadmap? Open an issue or discussion on GitHub.
+Ideas? Issues? Open a GitHub discussion or reach out on Twitter.
