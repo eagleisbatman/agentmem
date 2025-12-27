@@ -1,8 +1,13 @@
 use rusqlite::{params, Connection, Result};
 use crate::db::models::Memory;
+use crate::config::{load_config, get_config_path};
+use crate::embedding::{create_provider, EmbeddingProvider};
+use crate::embedding::qdrant::QdrantStore;
 use chrono::Utc;
 use uuid::Uuid;
+use anyhow::Result as AnyhowResult;
 
+/// Add a memory to SQLite (sync, no embedding)
 pub fn add_memory(
     conn: &Connection,
     memory_type: &str,
@@ -19,6 +24,73 @@ pub fn add_memory(
     )?;
 
     Ok(id)
+}
+
+/// Add a memory with embedding (async, stores in both SQLite and Qdrant)
+pub async fn add_memory_with_embedding(
+    conn: &Connection,
+    memory_type: &str,
+    title: &str,
+    content: Option<&str>,
+) -> AnyhowResult<(Uuid, bool)> {
+    // First, add to SQLite
+    let id = add_memory(conn, memory_type, title, content)
+        .map_err(|e| anyhow::anyhow!("Failed to add memory to SQLite: {}", e))?;
+
+    // Try to add embedding if configured
+    let embedded = match try_embed_memory(&id.to_string(), memory_type, title, content).await {
+        Ok(_) => true,
+        Err(e) => {
+            // Log but don't fail - embedding is optional
+            eprintln!("Warning: Failed to embed memory: {}", e);
+            false
+        }
+    };
+
+    Ok((id, embedded))
+}
+
+/// Try to generate and store embedding for a memory
+async fn try_embed_memory(
+    memory_id: &str,
+    memory_type: &str,
+    title: &str,
+    content: Option<&str>,
+) -> AnyhowResult<()> {
+    // Load config
+    let config_path = get_config_path();
+    if !config_path.exists() {
+        anyhow::bail!("Config not found");
+    }
+    let config = load_config(&config_path)?;
+
+    // Check if embedding is enabled
+    if config.embedding.provider == "none" {
+        return Ok(()); // Silently skip if not configured
+    }
+
+    // Create embedding provider
+    let provider = create_provider(&config.embedding.provider, config.embedding.model.as_deref())?;
+
+    // Create text to embed (title + content)
+    let text = match content {
+        Some(c) => format!("{}: {}", title, c),
+        None => title.to_string(),
+    };
+
+    // Generate embedding
+    let embedding = provider.embed(&text).await?;
+
+    // Store in Qdrant
+    let store = QdrantStore::new(
+        &config.qdrant.url,
+        &config.qdrant.collection,
+        provider.dimensions(),
+    ).await?;
+
+    store.upsert(memory_id, embedding, memory_type, title).await?;
+
+    Ok(())
 }
 
 pub fn list_memories(conn: &Connection) -> Result<Vec<Memory>> {

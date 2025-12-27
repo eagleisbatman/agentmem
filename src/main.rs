@@ -14,9 +14,10 @@ use crate::init::run_init;
 use crate::config::get_db_path;
 use crate::db::get_connection;
 use crate::tasks::service::{create_task, list_tasks, get_ready_tasks};
-use crate::memory::service::{add_memory, list_memories, add_protected_file, add_tool};
+use crate::memory::service::{add_memory, add_memory_with_embedding, list_memories, add_protected_file, add_tool};
 use crate::sync::{export_to_jsonl, import_from_jsonl, git_sync};
-use crate::retrieval::context::{get_context, format_context_markdown};
+use crate::retrieval::context::{get_context, get_context_async, format_context_markdown};
+use crate::retrieval::search::semantic_search;
 use crate::hooks::{install_hooks, list_hooks, test_hook};
 use std::path::Path;
 
@@ -158,7 +159,8 @@ enum HookCommands {
     },
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
@@ -206,8 +208,12 @@ fn main() -> Result<()> {
             let conn = get_connection(db_path)?;
             match command {
                 MemoryCommands::Add { memory_type, title, content } => {
-                    let id = add_memory(&conn, &memory_type, &title, content.as_deref())?;
-                    println!("✓ Added memory: {} \"{}\"", id, title);
+                    let (id, embedded) = add_memory_with_embedding(&conn, &memory_type, &title, content.as_deref()).await?;
+                    if embedded {
+                        println!("✓ Added memory with embedding: {} \"{}\"", id, title);
+                    } else {
+                        println!("✓ Added memory: {} \"{}\"", id, title);
+                    }
                 },
                 MemoryCommands::List { json } => {
                     let memories = list_memories(&conn)?;
@@ -219,7 +225,29 @@ fn main() -> Result<()> {
                         }
                     }
                 },
-                MemoryCommands::Search { .. } => println!("Memory search not implemented yet (requires embeddings)"),
+                MemoryCommands::Search { query } => {
+                    match semantic_search(&conn, &query, 10).await {
+                        Ok(results) => {
+                            if results.is_empty() {
+                                println!("No memories found for query: \"{}\"", query);
+                            } else {
+                                println!("Found {} memories:\n", results.len());
+                                for r in results {
+                                    println!("[{:.2}] [{}] {}: {}",
+                                        r.score,
+                                        r.memory.memory_type,
+                                        r.memory.title,
+                                        r.memory.content.as_deref().unwrap_or("")
+                                    );
+                                }
+                            }
+                        },
+                        Err(e) => {
+                            println!("Semantic search failed: {}", e);
+                            println!("Hint: Make sure Qdrant is running and embedding is configured.");
+                        }
+                    }
+                },
             }
         },
         Commands::Protect { path, reason } => {
@@ -250,8 +278,10 @@ fn main() -> Result<()> {
                 anyhow::bail!("AgentMem not initialized. Run 'am init' first.");
             }
             let conn = get_connection(db_path)?;
-            let context = get_context(&conn, query.as_deref(), task.as_deref(), file.as_deref(), limit_memories, limit_tasks)?;
-            
+
+            // Use async version which tries semantic search first
+            let context = get_context_async(&conn, query.as_deref(), task.as_deref(), file.as_deref(), limit_memories, limit_tasks).await?;
+
             if json || format == "json" {
                 println!("{}", serde_json::to_string_pretty(&context)?);
             } else if format == "markdown" {

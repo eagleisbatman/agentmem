@@ -6,7 +6,22 @@ use anyhow::Result;
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
     pub embedding: EmbeddingConfig,
+    #[serde(default = "default_qdrant_config")]
+    pub qdrant: QdrantConfig,
     pub hooks: HooksConfig,
+}
+
+fn default_qdrant_config() -> QdrantConfig {
+    QdrantConfig {
+        url: "http://localhost:6334".to_string(),
+        collection: "agentmem_memories".to_string(),
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct QdrantConfig {
+    pub url: String,
+    pub collection: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -43,6 +58,10 @@ impl Default for Config {
             embedding: EmbeddingConfig {
                 provider: "none".to_string(),
                 model: None,
+            },
+            qdrant: QdrantConfig {
+                url: "http://localhost:6334".to_string(),
+                collection: "agentmem_memories".to_string(),
             },
             hooks: HooksConfig {
                 pre_prompt: HookSettings {
