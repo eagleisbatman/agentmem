@@ -1,0 +1,134 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Users - simple for now, expandable for teams later
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  name      String?
+  apiKey    String   @unique @map("api_key")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  projects       Project[]
+  sessions       Session[]
+  memories       Memory[]
+  protectedFiles ProtectedFile[]
+  tasks          Task[]
+
+  @@map("users")
+}
+
+// Projects registry
+model Project {
+  id           String   @id @default(uuid())
+  userId       String   @map("user_id")
+  name         String
+  path         String?  // Local path for reference
+  machineId    String?  @map("machine_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+  lastActiveAt DateTime @default(now()) @map("last_active_at")
+
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessions       Session[]
+  memories       Memory[]
+  protectedFiles ProtectedFile[]
+  tasks          Task[]
+
+  @@unique([userId, name, machineId])
+  @@map("projects")
+}
+
+// Sessions - each agent invocation
+model Session {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  projectId String    @map("project_id")
+  agent     String    // "claude-code", "cursor", "gemini-cli", "codex-cli"
+  model     String?   // "claude-sonnet-4-20250514", "gpt-4o", etc.
+  startedAt DateTime  @default(now()) @map("started_at")
+  endedAt   DateTime? @map("ended_at")
+  tokensIn  Int       @default(0) @map("tokens_in")
+  tokensOut Int       @default(0) @map("tokens_out")
+  costUsd   Decimal   @default(0) @map("cost_usd") @db.Decimal(10, 6)
+  status    String    @default("active") // active, completed, error
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project  Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  memories Memory[]
+
+  @@index([userId, projectId])
+  @@index([startedAt(sort: Desc)])
+  @@map("sessions")
+}
+
+// Memories - the core data
+model Memory {
+  id             String    @id @default(uuid())
+  userId         String    @map("user_id")
+  projectId      String?   @map("project_id") // NULL for global scope
+  sessionId      String?   @map("session_id")
+  scope          String    @default("project") // "global" or "project"
+  memoryType     String    @map("memory_type") // decision, correction, gotcha, pattern, etc.
+  title          String
+  content        String?
+  agent          String?   // Which agent created this
+  model          String?   // Which model
+  outcome        String    @default("unknown") // success, failed, unknown
+  confidence     Int       @default(70)
+  timesObserved  Int       @default(1) @map("times_observed")
+  source         String?   // Transcript excerpt
+  embeddingId    String?   @map("embedding_id") // Qdrant point ID
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  lastObservedAt DateTime  @default(now()) @map("last_observed_at")
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  session Session? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@index([userId, projectId])
+  @@index([userId, scope])
+  @@index([createdAt(sort: Desc)])
+  @@map("memories")
+}
+
+// Protected files - per project
+model ProtectedFile {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  projectId String   @map("project_id")
+  pattern   String
+  reason    String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("protected_files")
+}
+
+// Tasks - per project
+model Task {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  projectId   String   @map("project_id")
+  title       String
+  description String?
+  status      String   @default("open")
+  priority    Int      @default(2)
+  taskType    String   @default("task") @map("task_type")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("tasks")
+}
