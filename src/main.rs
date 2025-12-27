@@ -1,3 +1,4 @@
+pub mod api;
 pub mod config;
 pub mod db;
 pub mod embedding;
@@ -125,6 +126,16 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Manage cloud authentication
+    Auth {
+        #[command(subcommand)]
+        command: AuthCommands,
+    },
+    /// Manage cloud sessions (for hooks)
+    Session {
+        #[command(subcommand)]
+        command: SessionCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -155,14 +166,22 @@ enum MemoryCommands {
         title: String,
         #[arg(short, long)]
         content: Option<String>,
+        /// Skip syncing to cloud (local only)
+        #[arg(long)]
+        local: bool,
     },
     List {
         #[arg(long)]
         json: bool,
+        /// Include cloud memories
+        #[arg(long)]
+        cloud: bool,
     },
     Search {
         query: String,
     },
+    /// Sync all local memories to cloud
+    Push,
 }
 
 #[derive(Subcommand)]
@@ -187,6 +206,56 @@ enum HookCommands {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum AuthCommands {
+    /// Login with API key
+    Login {
+        /// API key (or enter interactively)
+        #[arg(long)]
+        api_key: Option<String>,
+    },
+    /// Register a new account
+    Register {
+        /// Email address
+        #[arg(long)]
+        email: Option<String>,
+        /// Your name
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// Show current authentication status
+    Status,
+    /// Logout and clear credentials
+    Logout,
+}
+
+#[derive(Subcommand)]
+enum SessionCommands {
+    /// Start a new session (called by hooks)
+    Start {
+        /// Agent name (claude-code, gemini-cli, etc.)
+        #[arg(long)]
+        agent: Option<String>,
+        /// Model name
+        #[arg(long)]
+        model: Option<String>,
+    },
+    /// End current session (called by hooks)
+    End {
+        /// Input tokens used
+        #[arg(long)]
+        tokens_in: Option<i32>,
+        /// Output tokens used
+        #[arg(long)]
+        tokens_out: Option<i32>,
+        /// Model name
+        #[arg(long)]
+        model: Option<String>,
+    },
+    /// Show current session status
+    Status,
 }
 
 #[tokio::main]
@@ -237,21 +306,58 @@ async fn main() -> Result<()> {
             }
             let conn = get_connection(db_path)?;
             match command {
-                MemoryCommands::Add { memory_type, title, content } => {
+                MemoryCommands::Add { memory_type, title, content, local } => {
                     let (id, embedded) = add_memory_with_embedding(&conn, &memory_type, &title, content.as_deref()).await?;
                     if embedded {
                         println!("✓ Added memory with embedding: {} \"{}\"", id, title);
                     } else {
                         println!("✓ Added memory: {} \"{}\"", id, title);
                     }
+
+                    // Sync to cloud if authenticated and not --local
+                    if !local {
+                        if let Ok(Some(_)) = crate::api::get_api_credentials() {
+                            match sync_memory_to_cloud(&memory_type, &title, content.as_deref()).await {
+                                Ok(_) => println!("  ↑ Synced to cloud"),
+                                Err(e) => println!("  ! Cloud sync failed: {}", e),
+                            }
+                        }
+                    }
                 },
-                MemoryCommands::List { json } => {
+                MemoryCommands::List { json, cloud } => {
                     let memories = list_memories(&conn)?;
                     if json {
                         println!("{}", serde_json::to_string_pretty(&memories)?);
                     } else {
-                        for m in memories {
-                            println!("[{}] {}: {}", m.memory_type, m.id, m.title);
+                        if !memories.is_empty() {
+                            println!("Local memories:");
+                            for m in memories {
+                                println!("  [{}] {}: {}", m.memory_type, m.id, m.title);
+                            }
+                        } else {
+                            println!("No local memories.");
+                        }
+
+                        // Show cloud memories if requested
+                        if cloud {
+                            if let Ok(Some(_)) = crate::api::get_api_credentials() {
+                                match list_cloud_memories().await {
+                                    Ok(cloud_mems) => {
+                                        println!("\nCloud memories:");
+                                        if cloud_mems.is_empty() {
+                                            println!("  No cloud memories.");
+                                        } else {
+                                            for m in cloud_mems {
+                                                println!("  [{}] {}: {} ({})",
+                                                    m.memory_type, m.id, m.title, m.scope);
+                                            }
+                                        }
+                                    },
+                                    Err(e) => println!("\n! Failed to fetch cloud memories: {}", e),
+                                }
+                            } else {
+                                println!("\n! Not authenticated. Run 'am auth login' first.");
+                            }
                         }
                     }
                 },
@@ -276,6 +382,27 @@ async fn main() -> Result<()> {
                             println!("Semantic search failed: {}", e);
                             println!("Hint: Make sure Qdrant is running and embedding is configured.");
                         }
+                    }
+                },
+                MemoryCommands::Push => {
+                    if let Ok(Some(_)) = crate::api::get_api_credentials() {
+                        let memories = list_memories(&conn)?;
+                        if memories.is_empty() {
+                            println!("No local memories to push.");
+                        } else {
+                            println!("Pushing {} memories to cloud...", memories.len());
+                            let mut success = 0;
+                            let mut failed = 0;
+                            for m in &memories {
+                                match sync_memory_to_cloud(&m.memory_type, &m.title, m.content.as_deref()).await {
+                                    Ok(_) => success += 1,
+                                    Err(_) => failed += 1,
+                                }
+                            }
+                            println!("✓ Pushed {} memories ({} failed)", success, failed);
+                        }
+                    } else {
+                        anyhow::bail!("Not authenticated. Run 'am auth login' first.");
                     }
                 },
             }
@@ -448,6 +575,12 @@ async fn main() -> Result<()> {
         },
         Commands::Doctor { json } => {
             run_doctor(json).await?;
+        },
+        Commands::Auth { command } => {
+            run_auth(command).await?;
+        },
+        Commands::Session { command } => {
+            run_session(command).await?;
         },
     }
 
@@ -630,6 +763,283 @@ async fn run_doctor(json_output: bool) -> Result<()> {
             }
         }
         println!();
+    }
+
+    Ok(())
+}
+
+/// Sync a memory to the cloud API
+async fn sync_memory_to_cloud(memory_type: &str, title: &str, content: Option<&str>) -> Result<()> {
+    use crate::api::{ApiClient, CreateMemoryRequest, Memory, get_machine_id};
+
+    let client = ApiClient::new()?;
+
+    // Get project name from current directory
+    let project_name = std::env::current_dir()?
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    let request = CreateMemoryRequest {
+        project_name,
+        session_id: None,
+        scope: "project".to_string(),
+        memory_type: memory_type.to_string(),
+        title: title.to_string(),
+        content: content.map(|s| s.to_string()),
+        agent: Some("cli".to_string()),
+        model: None,
+        confidence: Some(80),
+        machine_id: Some(get_machine_id()),
+    };
+
+    client.post::<Memory, _>("/api/memories", request).await?;
+    Ok(())
+}
+
+/// List memories from cloud
+async fn list_cloud_memories() -> Result<Vec<crate::api::Memory>> {
+    use crate::api::ApiClient;
+
+    let client = ApiClient::new()?;
+
+    // Get project name from current directory
+    let project_name = std::env::current_dir()?
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    let path = format!("/api/memories?projectName={}", urlencoding::encode(&project_name));
+    let memories: Vec<crate::api::Memory> = client.get(&path).await?;
+    Ok(memories)
+}
+
+/// Run authentication commands
+async fn run_auth(command: AuthCommands) -> Result<()> {
+    use crate::api::{
+        ApiClient, RegisterRequest,
+        save_credentials, clear_credentials, get_api_credentials,
+        prompt_api_key, prompt_email, get_machine_id,
+    };
+
+    match command {
+        AuthCommands::Login { api_key } => {
+            // Get API key from arg or prompt
+            let key = match api_key {
+                Some(k) => k,
+                None => prompt_api_key()?,
+            };
+
+            // Verify the key works
+            println!("Verifying API key...");
+            let client = ApiClient::new()?.with_api_key(key.clone());
+
+            match client.get::<crate::api::UserWithStats>("/api/auth/me").await {
+                Ok(user) => {
+                    // Save credentials
+                    save_credentials(&key, &user.id, &user.email)?;
+
+                    println!();
+                    println!("✓ Logged in as {} ({})", user.email, user.name.unwrap_or_default());
+                    println!();
+                    println!("  Projects: {}", user.stats.projects);
+                    println!("  Memories: {}", user.stats.memories);
+                    println!("  Sessions: {}", user.stats.sessions);
+                    println!();
+                    println!("Credentials saved to ~/.agentmem/credentials");
+                }
+                Err(e) => {
+                    anyhow::bail!("Login failed: {}. Check your API key.", e);
+                }
+            }
+        }
+        AuthCommands::Register { email, name } => {
+            // Get email from arg or prompt
+            let user_email = match email {
+                Some(e) => e,
+                None => prompt_email()?,
+            };
+
+            // Get name (optional)
+            let user_name = name;
+
+            println!("Creating account...");
+            let client = ApiClient::new()?;
+
+            let request = RegisterRequest {
+                email: user_email.clone(),
+                name: user_name,
+            };
+
+            match client.post::<crate::api::User, _>("/api/auth/register", request).await {
+                Ok(user) => {
+                    // Save credentials
+                    if let Some(ref api_key) = user.api_key {
+                        save_credentials(api_key, &user.id, &user.email)?;
+                    }
+
+                    println!();
+                    println!("✓ Account created successfully!");
+                    println!();
+                    println!("  Email: {}", user.email);
+                    if let Some(ref key) = user.api_key {
+                        println!("  API Key: {}", key);
+                        println!();
+                        println!("  IMPORTANT: Save your API key - it won't be shown again!");
+                    }
+                    println!();
+                    println!("Credentials saved to ~/.agentmem/credentials");
+                }
+                Err(e) => {
+                    anyhow::bail!("Registration failed: {}", e);
+                }
+            }
+        }
+        AuthCommands::Status => {
+            match get_api_credentials()? {
+                Some(key) => {
+                    println!("Checking authentication...");
+                    let client = ApiClient::new()?.with_api_key(key);
+
+                    match client.get::<crate::api::UserWithStats>("/api/auth/me").await {
+                        Ok(user) => {
+                            println!();
+                            println!("✓ Authenticated");
+                            println!();
+                            println!("  Email: {}", user.email);
+                            if let Some(name) = user.name {
+                                println!("  Name: {}", name);
+                            }
+                            println!("  Machine: {}", get_machine_id());
+                            println!();
+                            println!("  Projects: {}", user.stats.projects);
+                            println!("  Memories: {}", user.stats.memories);
+                            println!("  Sessions: {}", user.stats.sessions);
+                        }
+                        Err(_) => {
+                            println!();
+                            println!("✗ API key is invalid or expired");
+                            println!();
+                            println!("Run 'am auth login' to re-authenticate.");
+                        }
+                    }
+                }
+                None => {
+                    println!();
+                    println!("✗ Not authenticated");
+                    println!();
+                    println!("Run 'am auth login' to authenticate.");
+                    println!("Run 'am auth register' to create an account.");
+                }
+            }
+        }
+        AuthCommands::Logout => {
+            clear_credentials()?;
+            println!("✓ Logged out. Credentials cleared.");
+        }
+    }
+
+    Ok(())
+}
+
+/// Run session commands (for cloud tracking)
+async fn run_session(command: SessionCommands) -> Result<()> {
+    use crate::api::{ApiClient, CreateSessionRequest, UpdateSessionRequest, Session, get_api_credentials, get_machine_id};
+
+    // Check if authenticated
+    if get_api_credentials()?.is_none() {
+        // Silently skip if not authenticated (hooks should not fail)
+        return Ok(());
+    }
+
+    let client = ApiClient::new()?;
+
+    // Get project name from current directory
+    let project_name = std::env::current_dir()?
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    // Session ID file for tracking current session
+    let session_file = crate::config::get_agentmem_dir().join(".current_session");
+
+    match command {
+        SessionCommands::Start { agent, model } => {
+            let request = CreateSessionRequest {
+                project_name,
+                agent: agent.unwrap_or_else(|| "unknown".to_string()),
+                model,
+                machine_id: Some(get_machine_id()),
+            };
+
+            match client.post::<Session, _>("/api/sessions", request).await {
+                Ok(session) => {
+                    // Save session ID for later
+                    if let Err(e) = std::fs::write(&session_file, &session.id) {
+                        eprintln!("Warning: Could not save session ID: {}", e);
+                    }
+                    println!("Session started: {}", session.id);
+                }
+                Err(e) => {
+                    eprintln!("Warning: Could not start cloud session: {}", e);
+                }
+            }
+        }
+        SessionCommands::End { tokens_in, tokens_out, model } => {
+            // Read session ID
+            if let Ok(session_id) = std::fs::read_to_string(&session_file) {
+                let session_id = session_id.trim();
+                if !session_id.is_empty() {
+                    let request = UpdateSessionRequest {
+                        tokens_in,
+                        tokens_out,
+                        model,
+                        end: Some(true),
+                    };
+
+                    let path = format!("/api/sessions/{}", session_id);
+                    match client.put::<Session, _>(&path, request).await {
+                        Ok(_) => {
+                            println!("Session ended");
+                            // Clean up session file
+                            let _ = std::fs::remove_file(&session_file);
+                        }
+                        Err(e) => {
+                            eprintln!("Warning: Could not end cloud session: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+        SessionCommands::Status => {
+            if let Ok(session_id) = std::fs::read_to_string(&session_file) {
+                let session_id = session_id.trim();
+                if !session_id.is_empty() {
+                    let path = format!("/api/sessions/{}", session_id);
+                    match client.get::<Session>(&path).await {
+                        Ok(session) => {
+                            println!("Current session: {}", session.id);
+                            println!("  Agent: {}", session.agent);
+                            if let Some(m) = session.model {
+                                println!("  Model: {}", m);
+                            }
+                            println!("  Started: {}", session.started_at);
+                            println!("  Tokens: {} in / {} out", session.tokens_in, session.tokens_out);
+                        }
+                        Err(_) => {
+                            println!("No active session");
+                        }
+                    }
+                } else {
+                    println!("No active session");
+                }
+            } else {
+                println!("No active session");
+            }
+        }
     }
 
     Ok(())

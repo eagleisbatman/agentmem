@@ -74,9 +74,35 @@ module.exports = {
 };
 "#;
 
+/// Session start hook template for Claude Code
+/// This hook runs when a session starts to register it with the cloud
+pub const CLAUDE_SESSION_START_HOOK: &str = r#"const { execSync } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+module.exports = {
+  event: 'SessionStart',
+
+  async handler({ sessionId, model }) {
+    try {
+      // Start cloud session tracking
+      execSync(
+        `am session start --agent claude-code${model ? ` --model "${model}"` : ''}`,
+        { encoding: 'utf-8', timeout: 5000 }
+      );
+    } catch (error) {
+      // Silently fail - don't block session
+      console.error('AgentMem session start error:', error.message);
+    }
+    return {};
+  }
+};
+"#;
+
 /// Post-session hook template for Claude Code
 /// This hook runs after session end for memory extraction and sync
-pub const CLAUDE_POST_SESSION_HOOK: &str = r#"const { spawn } = require('child_process');
+pub const CLAUDE_POST_SESSION_HOOK: &str = r#"const { spawn, execSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -84,8 +110,19 @@ const path = require('path');
 module.exports = {
   event: 'SessionEnd',
 
-  async handler({ transcript, sessionId }) {
+  async handler({ transcript, sessionId, tokensIn, tokensOut, model }) {
     try {
+      // End cloud session tracking
+      try {
+        let cmd = 'am session end';
+        if (tokensIn) cmd += ` --tokens-in ${tokensIn}`;
+        if (tokensOut) cmd += ` --tokens-out ${tokensOut}`;
+        if (model) cmd += ` --model "${model}"`;
+        execSync(cmd, { encoding: 'utf-8', timeout: 5000 });
+      } catch (e) {
+        // Silently continue
+      }
+
       // Write transcript to temp file if provided
       if (transcript && Array.isArray(transcript) && transcript.length > 0) {
         const tempDir = os.tmpdir();
