@@ -129,10 +129,10 @@ fn install_claude_code_hooks() -> Result<()> {
         .entry("hooks").or_insert_with(|| json!({}));
     let hooks_obj = hooks.as_object_mut().unwrap();
 
-    // New format: {"UserPromptSubmit": [{"matcher": {}, "hooks": [{"type": "command", "command": "..."}]}]}
+    // New format: {"UserPromptSubmit": [{"matcher": "*", "hooks": [{"type": "command", "command": "..."}]}]}
     hooks_obj.insert("UserPromptSubmit".to_string(), json!([
         {
-            "matcher": {},
+            "matcher": "*",
             "hooks": [
                 {
                     "type": "command",
@@ -143,7 +143,7 @@ fn install_claude_code_hooks() -> Result<()> {
     ]));
     hooks_obj.insert("SessionEnd".to_string(), json!([
         {
-            "matcher": {},
+            "matcher": "*",
             "hooks": [
                 {
                     "type": "command",
