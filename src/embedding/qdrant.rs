@@ -1,15 +1,15 @@
 use anyhow::{Context, Result};
-use qdrant_client::prelude::*;
+use qdrant_client::Qdrant;
 use qdrant_client::qdrant::{
-    vectors_config::Config, CreateCollection, Distance, PointStruct, SearchPoints,
-    VectorParams, VectorsConfig, with_payload_selector::SelectorOptions, WithPayloadSelector,
+    vectors_config::Config, CreateCollectionBuilder, DeletePointsBuilder, Distance, PointStruct,
+    SearchPointsBuilder, UpsertPointsBuilder, VectorParamsBuilder, VectorsConfig,
 };
 use serde_json::json;
 use std::collections::HashMap;
 
 /// Qdrant vector store for memory embeddings
 pub struct QdrantStore {
-    client: QdrantClient,
+    client: Qdrant,
     collection: String,
     dimensions: u64,
 }
@@ -17,7 +17,7 @@ pub struct QdrantStore {
 impl QdrantStore {
     /// Create a new Qdrant store connection
     pub async fn new(url: &str, collection: &str, dimensions: usize) -> Result<Self> {
-        let client = QdrantClient::from_url(url)
+        let client = Qdrant::from_url(url)
             .build()
             .context("Failed to connect to Qdrant")?;
 
@@ -48,17 +48,14 @@ impl QdrantStore {
 
         if !exists {
             self.client
-                .create_collection(&CreateCollection {
-                    collection_name: self.collection.clone(),
-                    vectors_config: Some(VectorsConfig {
-                        config: Some(Config::Params(VectorParams {
-                            size: self.dimensions,
-                            distance: Distance::Cosine.into(),
-                            ..Default::default()
-                        })),
-                    }),
-                    ..Default::default()
-                })
+                .create_collection(
+                    CreateCollectionBuilder::new(&self.collection)
+                        .vectors_config(VectorsConfig {
+                            config: Some(Config::Params(
+                                VectorParamsBuilder::new(self.dimensions, Distance::Cosine).build()
+                            )),
+                        })
+                )
                 .await
                 .context("Failed to create collection")?;
         }
@@ -74,7 +71,7 @@ impl QdrantStore {
         memory_type: &str,
         title: &str,
     ) -> Result<()> {
-        let payload: Payload = json!({
+        let payload: qdrant_client::Payload = json!({
             "memory_id": memory_id,
             "memory_type": memory_type,
             "title": title,
@@ -88,7 +85,7 @@ impl QdrantStore {
         let point = PointStruct::new(point_id, embedding, payload);
 
         self.client
-            .upsert_points_blocking(&self.collection, None, vec![point], None)
+            .upsert_points(UpsertPointsBuilder::new(&self.collection, vec![point]))
             .await
             .context("Failed to upsert point")?;
 
@@ -103,15 +100,10 @@ impl QdrantStore {
     ) -> Result<Vec<SearchResult>> {
         let search_result = self
             .client
-            .search_points(&SearchPoints {
-                collection_name: self.collection.clone(),
-                vector: query_embedding,
-                limit: limit as u64,
-                with_payload: Some(WithPayloadSelector {
-                    selector_options: Some(SelectorOptions::Enable(true)),
-                }),
-                ..Default::default()
-            })
+            .search_points(
+                SearchPointsBuilder::new(&self.collection, query_embedding, limit as u64)
+                    .with_payload(true)
+            )
             .await
             .context("Failed to search points")?;
 
@@ -134,14 +126,13 @@ impl QdrantStore {
 
     /// Delete a memory embedding from the store
     pub async fn delete(&self, memory_id: &str) -> Result<()> {
-        let point_id = uuid_to_u64(memory_id);
+        use qdrant_client::qdrant::PointId;
+        let point_id: PointId = uuid_to_u64(memory_id).into();
 
         self.client
-            .delete_points_blocking(
-                &self.collection,
-                None,
-                &vec![point_id.into()].into(),
-                None,
+            .delete_points(
+                DeletePointsBuilder::new(&self.collection)
+                    .points(vec![point_id])
             )
             .await
             .context("Failed to delete point")?;

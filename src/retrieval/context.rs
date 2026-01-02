@@ -2,7 +2,7 @@ use rusqlite::{Connection, Result};
 use crate::db::models::{Task, Memory, ProtectedFile, Tool};
 use crate::tasks::service::get_ready_tasks;
 use crate::memory::service::list_memories;
-use crate::retrieval::search::{semantic_search, is_semantic_search_available};
+use crate::retrieval::search::semantic_search;
 use serde::{Deserialize, Serialize};
 use anyhow::Result as AnyhowResult;
 

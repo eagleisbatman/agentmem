@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::config::{load_config, get_config_path};
 use crate::db::models::Memory;
-use crate::embedding::{create_provider, EmbeddingProvider};
+use crate::embedding::create_provider;
 use crate::embedding::qdrant::QdrantStore;
 
 /// Semantic search result with score

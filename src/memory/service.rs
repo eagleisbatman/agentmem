@@ -1,7 +1,7 @@
 use rusqlite::{params, Connection, Result};
 use crate::db::models::Memory;
 use crate::config::{load_config, get_config_path};
-use crate::embedding::{create_provider, EmbeddingProvider};
+use crate::embedding::create_provider;
 use crate::embedding::qdrant::QdrantStore;
 use chrono::Utc;
 use uuid::Uuid;
