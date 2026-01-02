@@ -108,12 +108,12 @@ fn install_claude_code_hooks() -> Result<()> {
         .context("Failed to get current directory")?;
     let abs_hooks_dir = project_root.join(".agentmem/hooks");
 
-    // Write hook files
-    let pre_prompt_path = hooks_dir.join("pre-prompt.js");
+    // Write hook files (use .cjs extension for CommonJS compatibility)
+    let pre_prompt_path = hooks_dir.join("pre-prompt.cjs");
     fs::write(&pre_prompt_path, CLAUDE_PRE_PROMPT_HOOK)?;
     make_executable(&pre_prompt_path)?;
 
-    let post_session_path = hooks_dir.join("post-session.js");
+    let post_session_path = hooks_dir.join("post-session.cjs");
     fs::write(&post_session_path, CLAUDE_POST_SESSION_HOOK)?;
     make_executable(&post_session_path)?;
 
@@ -130,8 +130,9 @@ fn install_claude_code_hooks() -> Result<()> {
     };
 
     // Build absolute paths for hook commands (works from any subdirectory)
-    let pre_prompt_cmd = format!("node {}/pre-prompt.js", abs_hooks_dir.display());
-    let post_session_cmd = format!("node {}/post-session.js", abs_hooks_dir.display());
+    // Use .cjs extension for CommonJS compatibility with ES module projects
+    let pre_prompt_cmd = format!("node {}/pre-prompt.cjs", abs_hooks_dir.display());
+    let post_session_cmd = format!("node {}/post-session.cjs", abs_hooks_dir.display());
 
     // Add hooks configuration with new matcher format
     let hooks = settings.as_object_mut().unwrap()
@@ -168,8 +169,8 @@ fn install_claude_code_hooks() -> Result<()> {
     update_context_file("CLAUDE.md", CLAUDE_MD_SECTION, "## AgentMem Integration")?;
 
     println!("Installed Claude Code hooks:");
-    println!("  - .agentmem/hooks/pre-prompt.js");
-    println!("  - .agentmem/hooks/post-session.js");
+    println!("  - .agentmem/hooks/pre-prompt.cjs");
+    println!("  - .agentmem/hooks/post-session.cjs");
     println!("  - .claude/settings.json (updated)");
 
     Ok(())
@@ -310,8 +311,8 @@ pub fn list_hooks() -> Result<Vec<HookInfo>> {
             let entry = entry?;
             let path = entry.path();
 
-            // Include .js files and executable scripts
-            let is_hook = path.extension().map(|e| e == "js").unwrap_or(false)
+            // Include .js/.cjs files and executable scripts
+            let is_hook = path.extension().map(|e| e == "js" || e == "cjs").unwrap_or(false)
                 || path.file_name().map(|n| n.to_string_lossy().starts_with("am-")).unwrap_or(false);
 
             if is_hook {
