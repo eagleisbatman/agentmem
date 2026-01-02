@@ -8,8 +8,40 @@ use async_openai::{
     Client,
 };
 use async_trait::async_trait;
+use std::fs;
 
 use crate::embedding::service::EmbeddingProvider;
+
+/// Get OpenAI API key from environment or credentials file
+fn get_openai_api_key() -> Result<String> {
+    // First check environment variable
+    if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+        if !key.is_empty() {
+            return Ok(key);
+        }
+    }
+
+    // Then check global credentials file
+    let creds_path = dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".agentmem/credentials");
+
+    if creds_path.exists() {
+        let content = fs::read_to_string(&creds_path)?;
+        for line in content.lines() {
+            if line.starts_with("OPENAI_API_KEY=") {
+                let key = line.strip_prefix("OPENAI_API_KEY=").unwrap_or("");
+                if !key.is_empty() {
+                    // Set it as env var so async-openai client can use it
+                    std::env::set_var("OPENAI_API_KEY", key);
+                    return Ok(key.to_string());
+                }
+            }
+        }
+    }
+
+    anyhow::bail!("OPENAI_API_KEY not found in environment or ~/.agentmem/credentials")
+}
 
 /// OpenAI embedding provider
 pub struct OpenAIProvider {
@@ -20,11 +52,10 @@ pub struct OpenAIProvider {
 
 impl OpenAIProvider {
     /// Create a new OpenAI provider
-    /// Reads API key from OPENAI_API_KEY environment variable
+    /// Reads API key from OPENAI_API_KEY environment variable or ~/.agentmem/credentials
     pub fn new(model: &str) -> Result<Self> {
-        // Check for API key
-        std::env::var("OPENAI_API_KEY")
-            .context("OPENAI_API_KEY environment variable not set")?;
+        // Check for API key (env var or credentials file)
+        get_openai_api_key()?;
 
         let client = Client::new();
 
@@ -109,15 +140,14 @@ impl EmbeddingProvider for OpenAIProvider {
 }
 
 /// Standalone chat completion function for use outside the provider
-/// Reads API key from OPENAI_API_KEY environment variable
+/// Reads API key from OPENAI_API_KEY environment variable or ~/.agentmem/credentials
 pub async fn chat_completion(
     model: &str,
     system_prompt: &str,
     user_prompt: &str,
 ) -> Result<String> {
-    // Check for API key
-    std::env::var("OPENAI_API_KEY")
-        .context("OPENAI_API_KEY environment variable not set")?;
+    // Check for API key (env var or credentials file)
+    get_openai_api_key()?;
 
     let client: Client<OpenAIConfig> = Client::new();
 
