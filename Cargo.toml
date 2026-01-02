@@ -3,6 +3,10 @@ name = "agentmem"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "am"
+path = "src/main.rs"
+
 [dependencies]
 clap = { version = "4.4", features = ["derive"] }
 rusqlite = { version = "0.30", features = ["bundled", "chrono"] }

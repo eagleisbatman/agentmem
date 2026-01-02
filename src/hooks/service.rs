@@ -103,6 +103,11 @@ fn install_claude_code_hooks() -> Result<()> {
     let hooks_dir = get_agentmem_dir().join("hooks");
     fs::create_dir_all(&hooks_dir)?;
 
+    // Get absolute path to project root for hook commands
+    let project_root = std::env::current_dir()
+        .context("Failed to get current directory")?;
+    let abs_hooks_dir = project_root.join(".agentmem/hooks");
+
     // Write hook files
     let pre_prompt_path = hooks_dir.join("pre-prompt.js");
     fs::write(&pre_prompt_path, CLAUDE_PRE_PROMPT_HOOK)?;
@@ -124,6 +129,10 @@ fn install_claude_code_hooks() -> Result<()> {
         json!({})
     };
 
+    // Build absolute paths for hook commands (works from any subdirectory)
+    let pre_prompt_cmd = format!("node {}/pre-prompt.js", abs_hooks_dir.display());
+    let post_session_cmd = format!("node {}/post-session.js", abs_hooks_dir.display());
+
     // Add hooks configuration with new matcher format
     let hooks = settings.as_object_mut().unwrap()
         .entry("hooks").or_insert_with(|| json!({}));
@@ -136,7 +145,7 @@ fn install_claude_code_hooks() -> Result<()> {
             "hooks": [
                 {
                     "type": "command",
-                    "command": "node .agentmem/hooks/pre-prompt.js"
+                    "command": pre_prompt_cmd
                 }
             ]
         }
@@ -147,7 +156,7 @@ fn install_claude_code_hooks() -> Result<()> {
             "hooks": [
                 {
                     "type": "command",
-                    "command": "node .agentmem/hooks/post-session.js"
+                    "command": post_session_cmd
                 }
             ]
         }
