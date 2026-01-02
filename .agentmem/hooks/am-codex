@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+#
+# AgentMem wrapper for Codex CLI
+# Usage: am-codex [codex args...]
+#
+
+# Get AgentMem context and add to prompt
+CONTEXT=$(am context 2>/dev/null)
+
+if [ -n "$CONTEXT" ]; then
+  echo "--- AgentMem Context ---"
+  echo "$CONTEXT"
+  echo "------------------------"
+  echo ""
+fi
+
+# Run codex with all arguments
+exec codex "$@"

@@ -1,0 +1,23 @@
+# AgentMem Integration
+
+This project uses AgentMem for persistent memory across AI sessions.
+
+## Important Rules
+
+1. Before modifying any file, run `am context` to check if it's protected
+2. Protected files require explicit user approval before changes
+3. Check for relevant memories about the current task
+
+## Commands
+- `am context` - Get relevant context
+- `am context --query "search term"` - Search memories
+- `am mem add <type> <title>` - Add a memory
+- `am protect <file>` - Mark file as protected
+- `am sync` - Sync to git
+
+## Memory Types
+- correction: Agent mistakes to avoid
+- decision: Technical/architectural choices
+- gotcha: Things that broke or surprised
+- pattern: Repeated behaviors
+- infrastructure: URLs, endpoints, configs

@@ -454,8 +454,11 @@ async fn main() -> Result<()> {
             }
             let conn = get_connection(db_path)?;
             export_to_jsonl(&conn, ".agentmem/agentmem.jsonl")?;
-            git_sync(push, message.as_deref())?;
-            println!("✓ Synced with git");
+            match git_sync(push, message.as_deref())? {
+                crate::sync::GitSyncResult::Synced => println!("✓ Synced with git"),
+                crate::sync::GitSyncResult::NoChanges => println!("✓ No changes to sync"),
+                crate::sync::GitSyncResult::NotAGitRepo => println!("⚠ Not a git repository - memories saved locally only"),
+            }
         },
         Commands::Export { path } => {
             let db_path = get_db_path();

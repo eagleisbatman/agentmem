@@ -1,18 +1,34 @@
 use std::process::Command;
 use anyhow::{Result, Context};
 
-pub fn git_sync(push: bool, message: Option<&str>) -> Result<()> {
+/// Result of git sync operation
+pub enum GitSyncResult {
+    Synced,
+    NoChanges,
+    NotAGitRepo,
+}
+
+pub fn git_sync(push: bool, message: Option<&str>) -> Result<GitSyncResult> {
     let msg = message.unwrap_or("agentmem: sync");
 
-    // git add .agentmem/agentmem.jsonl
+    // Check if we're in a git repo first
+    let check_git = Command::new("git")
+        .args(&["rev-parse", "--git-dir"])
+        .output()
+        .context("Failed to run git")?;
+
+    if !check_git.status.success() {
+        return Ok(GitSyncResult::NotAGitRepo);
+    }
+
+    // git add .agentmem/agentmem.jsonl (use -f to add even if gitignored)
     let status = Command::new("git")
-        .args(&["add", ".agentmem/agentmem.jsonl"])
+        .args(&["add", "-f", ".agentmem/agentmem.jsonl"])
         .status()
         .context("Failed to run git add")?;
 
     if !status.success() {
-        // Not a git repo or other error, but we'll just log it for now
-        return Ok(());
+        anyhow::bail!("git add failed");
     }
 
     // git commit -m "..."
@@ -28,10 +44,13 @@ pub fn git_sync(push: bool, message: Option<&str>) -> Result<()> {
             .args(&["commit", "-m", msg])
             .status()
             .context("Failed to run git commit")?;
-        
+
         if !status.success() {
             anyhow::bail!("Git commit failed");
         }
+    } else {
+        // No changes to commit
+        return Ok(GitSyncResult::NoChanges);
     }
 
     if push {
@@ -39,12 +58,12 @@ pub fn git_sync(push: bool, message: Option<&str>) -> Result<()> {
             .args(&["push"])
             .status()
             .context("Failed to run git push")?;
-        
+
         if !status.success() {
             anyhow::bail!("Git push failed");
         }
     }
 
-    Ok(())
+    Ok(GitSyncResult::Synced)
 }
 

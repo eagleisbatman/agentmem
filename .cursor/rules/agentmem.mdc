@@ -1,0 +1,43 @@
+---
+description: AgentMem persistent context integration
+globs: ["**/*"]
+alwaysApply: true
+---
+
+# AgentMem Integration
+
+This project uses AgentMem for persistent memory across AI sessions.
+
+## Before Making Changes
+
+Run `am context` in the terminal to check for:
+- Protected files that require approval before modification
+- Relevant memories about decisions, patterns, and gotchas
+- Current tasks and their priorities
+
+## Protected Files
+
+Always check protected files before modifying. Run:
+```
+am context --query "protected"
+```
+
+If a file is protected, ask the user for explicit approval before making changes.
+
+## Adding Memories
+
+When you learn something important, suggest adding it:
+- Corrections: `am mem add correction "Title" --content "What was wrong"`
+- Decisions: `am mem add decision "Title" --content "Why this choice"`
+- Gotchas: `am mem add gotcha "Title" --content "What to watch out for"`
+
+## Commands Reference
+
+| Command | Description |
+|---------|-------------|
+| `am context` | Get relevant memories |
+| `am context --query "search"` | Search memories |
+| `am mem add <type> <title>` | Add a memory |
+| `am protect <file>` | Mark file as protected |
+| `am task ready` | See unblocked tasks |
+| `am sync` | Sync to git |
