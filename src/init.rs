@@ -3,7 +3,7 @@ use std::io::{self, Write};
 use std::process::Command;
 use std::path::{Path, PathBuf};
 use anyhow::{Result, Context};
-use crate::config::{Config, get_agentmem_dir, get_config_path, get_db_path, save_config};
+use crate::config::{Config, save_config, get_project_id, get_local_agentmem_dir};
 use crate::db::get_connection;
 
 /// Global credentials directory
@@ -272,7 +272,8 @@ fn prompt_yes_no(question: &str, default: bool) -> bool {
 }
 
 pub fn run_init(quiet: bool, embedding: Option<String>, model: Option<String>) -> Result<()> {
-    let am_dir = get_agentmem_dir();
+    // Always use local directory for init, not discovered parent
+    let am_dir = get_local_agentmem_dir();
 
     if !quiet {
         println!();
@@ -385,7 +386,7 @@ pub fn run_init(quiet: bool, embedding: Option<String>, model: Option<String>) -
     }
 
     // Step 4: Create config.yaml
-    let config_path = get_config_path();
+    let config_path = am_dir.join("config.yaml");
     let config_exists = config_path.exists();
 
     let mut config = if config_exists {
@@ -393,6 +394,15 @@ pub fn run_init(quiet: bool, embedding: Option<String>, model: Option<String>) -
     } else {
         Config::default()
     };
+
+    // Set project-specific Qdrant collection name
+    if !config_exists {
+        let project_id = get_project_id();
+        config.qdrant.collection = format!("agentmem_{}", project_id);
+        if !quiet {
+            println!("  {} Using Qdrant collection: {}", "✓", config.qdrant.collection);
+        }
+    }
 
     // Update embedding provider
     if let Some(provider) = embedding {
@@ -411,7 +421,7 @@ pub fn run_init(quiet: bool, embedding: Option<String>, model: Option<String>) -
     }
 
     // Step 5: Initialize database
-    let db_path = get_db_path();
+    let db_path = am_dir.join("agentmem.db");
     let _conn = get_connection(db_path).context("Failed to initialize database")?;
     if !quiet {
         println!("  {} Initialized database", "✓");

@@ -105,8 +105,88 @@ pub fn save_config<P: AsRef<Path>>(path: P, config: &Config) -> Result<()> {
     Ok(())
 }
 
-pub fn get_agentmem_dir() -> PathBuf {
+/// Find the nearest .agentmem directory by walking up the directory tree
+/// Returns the path to .agentmem in the current directory or any parent
+pub fn find_agentmem_dir() -> Option<PathBuf> {
+    let mut current = std::env::current_dir().ok()?;
+
+    loop {
+        let candidate = current.join(".agentmem");
+        if candidate.exists() && candidate.is_dir() {
+            return Some(candidate);
+        }
+
+        if !current.pop() {
+            // Reached root, no .agentmem found
+            return None;
+        }
+    }
+}
+
+/// Find workspace root (parent directory containing .agentmem)
+/// This enables hierarchical workspace support
+pub fn find_workspace_root() -> Option<PathBuf> {
+    find_agentmem_dir().and_then(|am_dir| am_dir.parent().map(|p| p.to_path_buf()))
+}
+
+/// Get local .agentmem directory (always in current directory)
+pub fn get_local_agentmem_dir() -> PathBuf {
     PathBuf::from(".agentmem")
+}
+
+/// Get the .agentmem directory - uses hierarchical discovery
+/// Falls back to local directory if none found (for init)
+pub fn get_agentmem_dir() -> PathBuf {
+    find_agentmem_dir().unwrap_or_else(|| PathBuf::from(".agentmem"))
+}
+
+/// Check if we're in a workspace (found .agentmem in parent directory)
+pub fn is_workspace_subdirectory() -> bool {
+    if let Some(am_dir) = find_agentmem_dir() {
+        // If .agentmem is not in current directory, we're in a subdirectory
+        let local = std::env::current_dir()
+            .map(|cwd| cwd.join(".agentmem"))
+            .ok();
+        local.map(|l| l != am_dir).unwrap_or(false)
+    } else {
+        false
+    }
+}
+
+/// Generate a unique project identifier based on directory path
+/// Used for Qdrant collection names to isolate projects
+pub fn get_project_id() -> String {
+    let workspace_root = find_workspace_root()
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    // Use the directory name plus a hash of the full path for uniqueness
+    let dir_name = workspace_root
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
+
+    let path_str = workspace_root.to_string_lossy();
+    let hash = simple_hash(&path_str);
+
+    format!("{}_{}", sanitize_collection_name(dir_name), hash)
+}
+
+/// Simple hash function for generating collection name suffix
+fn simple_hash(s: &str) -> String {
+    let mut hash: u32 = 0;
+    for byte in s.bytes() {
+        hash = hash.wrapping_mul(31).wrapping_add(byte as u32);
+    }
+    format!("{:08x}", hash)
+}
+
+/// Sanitize string for use in Qdrant collection name
+fn sanitize_collection_name(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+        .collect::<String>()
+        .to_lowercase()
 }
 
 pub fn get_config_path() -> PathBuf {
