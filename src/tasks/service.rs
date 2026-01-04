@@ -222,27 +222,29 @@ pub fn get_task_history(conn: &Connection, task_id: &str) -> Result<Vec<TaskHist
 pub fn claim_task(conn: &Connection, task_id: &str, agent_id: &str) -> Result<bool> {
     let now = Utc::now();
 
-    // Check if task exists and is available
-    let claimed_by: Option<String> = conn.query_row(
-        "SELECT claimed_by FROM tasks WHERE id = ?1",
-        params![task_id],
-        |row| row.get(0)
-    )?;
-
-    // If already claimed by another agent, return false
-    if let Some(ref existing) = claimed_by {
-        if existing != agent_id {
-            return Ok(false);
-        }
-        // Already claimed by this agent - just return true
-        return Ok(true);
-    }
-
-    // Claim the task
-    conn.execute(
-        "UPDATE tasks SET claimed_by = ?1, claimed_at = ?2, status = 'in_progress', updated_at = ?2 WHERE id = ?3",
+    // Atomic claim - only succeeds if task is unclaimed OR already claimed by this agent
+    // This prevents TOCTOU race where two agents both read NULL then both UPDATE
+    let rows_affected = conn.execute(
+        "UPDATE tasks SET claimed_by = ?1, claimed_at = ?2, status = 'in_progress', updated_at = ?2
+         WHERE id = ?3 AND (claimed_by IS NULL OR claimed_by = '' OR claimed_by = ?1)",
         params![agent_id, now, task_id],
     )?;
+
+    // If no rows updated, either task doesn't exist or claimed by another agent
+    if rows_affected == 0 {
+        // Check if task exists to give better error context
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM tasks WHERE id = ?1)",
+            params![task_id],
+            |row| row.get(0)
+        ).unwrap_or(false);
+
+        if !exists {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        // Task exists but claimed by another agent
+        return Ok(false);
+    }
 
     // Record in history
     record_task_history(conn, task_id, Some("open"), "in_progress", agent_id, Some(&format!("Claimed by agent {}", agent_id)))?;
@@ -254,26 +256,29 @@ pub fn claim_task(conn: &Connection, task_id: &str, agent_id: &str) -> Result<bo
 pub fn release_task(conn: &Connection, task_id: &str, agent_id: &str) -> Result<bool> {
     let now = Utc::now();
 
-    // Check if this agent owns the claim
-    let claimed_by: Option<String> = conn.query_row(
-        "SELECT claimed_by FROM tasks WHERE id = ?1",
-        params![task_id],
-        |row| row.get(0)
+    // Atomic release - only succeeds if this agent owns the claim
+    // This prevents TOCTOU race conditions
+    let rows_affected = conn.execute(
+        "UPDATE tasks SET claimed_by = NULL, claimed_at = NULL, status = 'open', updated_at = ?1
+         WHERE id = ?2 AND claimed_by = ?3",
+        params![now, task_id, agent_id],
     )?;
 
-    if let Some(ref existing) = claimed_by {
-        if existing != agent_id {
-            return Ok(false); // Can't release someone else's claim
+    // If no rows updated, either task doesn't exist, not claimed, or claimed by another
+    if rows_affected == 0 {
+        // Check current state to determine reason
+        let claimed_by: Option<String> = conn.query_row(
+            "SELECT claimed_by FROM tasks WHERE id = ?1",
+            params![task_id],
+            |row| row.get(0)
+        ).ok().flatten();
+
+        match claimed_by {
+            None => return Ok(true),  // Not claimed, nothing to release (idempotent)
+            Some(ref owner) if owner.is_empty() => return Ok(true), // Same as above
+            Some(_) => return Ok(false), // Claimed by another agent
         }
-    } else {
-        return Ok(true); // Not claimed, nothing to release
     }
-
-    // Release the claim
-    conn.execute(
-        "UPDATE tasks SET claimed_by = NULL, claimed_at = NULL, status = 'open', updated_at = ?1 WHERE id = ?2",
-        params![now, task_id],
-    )?;
 
     // Record in history
     record_task_history(conn, task_id, Some("in_progress"), "open", agent_id, Some("Released by agent"))?;
