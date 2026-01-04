@@ -1,5 +1,19 @@
 #!/usr/bin/env node
 const { execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
+// Check if AgentMem is initialized in this project
+function findAgentMemDir() {
+  let dir = process.cwd();
+  while (dir !== '/') {
+    if (fs.existsSync(path.join(dir, '.agentmem'))) {
+      return path.join(dir, '.agentmem');
+    }
+    dir = path.dirname(dir);
+  }
+  return null;
+}
 
 // Read input from stdin
 let input = '';
@@ -9,6 +23,29 @@ process.stdin.on('end', () => {
   try {
     const event = JSON.parse(input);
     const prompt = event.prompt || '';
+
+    // Check if AgentMem is initialized
+    const amDir = findAgentMemDir();
+    if (!amDir) {
+      // Not initialized - output setup instructions
+      console.log(`## AgentMem Not Initialized
+
+This project doesn't have AgentMem set up yet. To enable persistent memory:
+
+\`\`\`bash
+am init
+\`\`\`
+
+This will:
+- Create .agentmem/ directory
+- Set up SQLite database
+- Optionally configure semantic search (requires Docker + OpenAI key)
+- Install Claude Code plugin
+
+Run \`am doctor\` to check system requirements.
+`);
+      return;
+    }
 
     // Start session
     try {

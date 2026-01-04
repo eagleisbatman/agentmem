@@ -1017,58 +1017,129 @@ async fn run_doctor(json_output: bool) -> Result<()> {
             if has_openai { "✓" } else { "✗" });
     }
 
-    // Check 7: Hooks installed
-    let hooks_dir = am_dir.join("hooks");
-    let hooks_count = if hooks_dir.exists() {
-        std::fs::read_dir(&hooks_dir)
-            .map(|entries| entries.filter(|e| e.is_ok()).count())
+    // Check 7: Claude Code plugin
+    let plugin_dir = dirs::home_dir()
+        .map(|h| h.join(".claude/plugins/agentmem"))
+        .unwrap_or_default();
+    let plugin_installed = plugin_dir.exists();
+    checks.push(HealthCheck {
+        component: "Claude Code plugin".to_string(),
+        status: if plugin_installed { "ok" } else { "missing" }.to_string(),
+        details: Some(plugin_dir.display().to_string()),
+    });
+    if !json_output {
+        println!("  {} Claude Code plugin",
+            if plugin_installed { "✓" } else { "✗" });
+    }
+
+    // Check 8: Memory count
+    let memory_count: i64 = if db_exists {
+        crate::db::get_connection(db_path.clone())
+            .ok()
+            .and_then(|conn| conn.query_row("SELECT COUNT(*) FROM memories", [], |r| r.get(0)).ok())
             .unwrap_or(0)
     } else {
         0
     };
-    checks.push(HealthCheck {
-        component: "Hooks".to_string(),
-        status: if hooks_count > 0 { "ok" } else { "none" }.to_string(),
-        details: Some(format!("{} installed", hooks_count)),
-    });
+    let task_count: i64 = if db_exists {
+        crate::db::get_connection(db_path)
+            .ok()
+            .and_then(|conn| conn.query_row("SELECT COUNT(*) FROM tasks WHERE status != 'closed'", [], |r| r.get(0)).ok())
+            .unwrap_or(0)
+    } else {
+        0
+    };
     if !json_output {
-        println!("  {} Hooks ({} installed)",
-            if hooks_count > 0 { "✓" } else { "!" },
-            hooks_count);
+        println!();
+        println!("  {} memories, {} open tasks", memory_count, task_count);
     }
 
-    // Summary
-    let all_ok = am_exists && db_exists && qdrant_running && has_openai;
+    // Summary with detailed fix instructions
+    let core_ok = am_exists && db_exists;
+    let semantic_ok = qdrant_running && has_openai;
+    let all_ok = core_ok && semantic_ok && plugin_installed;
 
     if json_output {
         println!("{}", serde_json::json!({
             "healthy": all_ok,
+            "core_functional": core_ok,
+            "semantic_search": semantic_ok,
             "checks": checks
         }));
     } else {
         println!();
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
         if all_ok {
-            println!("  Status: All systems operational");
+            println!("  ✓ All systems operational");
+        } else if core_ok {
+            println!("  ✓ Core functional (SQLite storage works)");
+            if !semantic_ok {
+                println!("  ! Semantic search disabled (optional)");
+            }
         } else {
-            println!("  Status: Some components need attention");
-            println!();
-            if !docker_installed {
-                println!("  Fix: Install Docker from https://docker.com");
-            }
-            if docker_installed && !docker_running {
-                println!("  Fix: Start Docker Desktop or docker daemon");
-            }
-            if docker_running && !qdrant_running {
-                println!("  Fix: Run 'docker start agentmem-qdrant' or 'am init'");
-            }
-            if !has_openai {
-                println!("  Fix: Set OPENAI_API_KEY or run 'am init'");
-            }
-            if !am_exists {
-                println!("  Fix: Run 'am init' in your project directory");
+            println!("  ✗ Setup incomplete");
+        }
+
+        // Detailed fix instructions
+        let mut fixes: Vec<(&str, &str, &str)> = Vec::new();
+
+        if !am_exists {
+            fixes.push(("Project not initialized", "am init", "Creates .agentmem/ directory and database"));
+        }
+
+        if !plugin_installed && am_exists {
+            fixes.push(("Claude Code plugin missing", "am init", "Re-run init to install plugin"));
+        }
+
+        if !docker_installed {
+            fixes.push(("Docker not installed", "brew install --cask docker", "Or download from https://docker.com"));
+        } else if !docker_running {
+            fixes.push(("Docker not running", "open -a Docker", "Or start Docker Desktop manually"));
+        } else if !qdrant_running {
+            // Check if container exists but stopped
+            let container_exists = Command::new("docker")
+                .args(["ps", "-a", "--format", "{{.Names}}"])
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).lines().any(|n| n == "agentmem-qdrant"))
+                .unwrap_or(false);
+
+            if container_exists {
+                fixes.push(("Qdrant stopped", "docker start agentmem-qdrant", "Starts existing container"));
+            } else {
+                fixes.push(("Qdrant not installed",
+                    "docker run -d --name agentmem-qdrant -p 6333:6333 -p 6334:6334 qdrant/qdrant",
+                    "Creates and starts Qdrant container"));
             }
         }
-        println!();
+
+        if !has_openai {
+            fixes.push(("OpenAI API key missing",
+                "export OPENAI_API_KEY='sk-...'",
+                "Or run 'am init' to save permanently"));
+        }
+
+        if !fixes.is_empty() {
+            println!();
+            println!("  To fix:");
+            println!();
+            for (issue, cmd, note) in fixes {
+                println!("  {} {}", "•", issue);
+                println!("    $ {}", cmd);
+                println!("    {}", note);
+                println!();
+            }
+        }
+
+        // What works without optional deps
+        if !semantic_ok && core_ok {
+            println!("  Note: AgentMem works without Docker/OpenAI, but with reduced features:");
+            println!("    - Memory storage and sync: ✓ works");
+            println!("    - Task tracking: ✓ works");
+            println!("    - Semantic search: ✗ disabled");
+            println!("    - Auto memory extraction: ✗ disabled");
+            println!();
+        }
     }
 
     Ok(())
