@@ -41,10 +41,10 @@ process.stdin.on('end', () => {
         stdio: 'ignore'
       }).unref();
 
-      // Clean up temp file after a delay
+      // Clean up temp file after a delay (unref to not block process exit)
       setTimeout(() => {
         try { fs.unlinkSync(transcriptFile); } catch (e) {}
-      }, 60000);
+      }, 60000).unref();
     }
 
     // Sync to git (non-blocking)
