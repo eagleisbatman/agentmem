@@ -173,13 +173,39 @@
 
 ---
 
+## Phase 7: Sync & Real-time Hooks ✅ NEW
+
+### 7.1 Real-time Hooks
+- [x] PostToolUse hook for Write|TodoWrite tools
+- [x] Capture TodoWrite state on every usage
+- [x] Detect plan file creation → trigger task extraction
+- [x] Stop hook reads transcript_path from Claude Code
+
+### 7.2 Plan → Tasks Automation
+- [x] `am plan extract-tasks --file <plan.md>` command
+- [x] GPT-4o parses plan into discrete tasks
+- [x] Creates tasks with priority and order
+- [x] Links tasks to active plan automatically
+
+### 7.3 Git Sync Improvements
+- [x] Pull before push (prevents conflicts)
+- [x] Auto-import after pull if JSONL changed
+- [x] Conflict resolution guidance
+
+### 7.4 Cross-Machine Sync
+- [x] `am import --embed` regenerates embeddings
+- [x] Auto-import on init (detects JSONL from git clone)
+- [x] Full sync workflow: export → pull → import → merge → push
+
+---
+
 ## Testing & Validation
 
 ### T1. Plugin Testing
 - [ ] Test fresh install with plugin
 - [ ] Test slash commands work
 - [ ] Test skills trigger correctly
-- [ ] Test hooks fire and return correct data
+- [x] Test hooks fire and return correct data (PostToolUse, Stop)
 
 ### T2. Migration Testing
 - [x] Test fresh database creation
@@ -194,8 +220,9 @@
 
 ### T4. Integration Testing
 - [x] Full workflow: init → add memories → sync
-- [ ] Plan mode → tasks creation
-- [ ] Session persistence across restarts
+- [x] Plan mode → tasks creation (via `am plan extract-tasks`)
+- [x] Session persistence across restarts (via hooks)
+- [x] Sub-agent memory sharing (tested - agents can read/write memories)
 
 ---
 
@@ -227,7 +254,8 @@
 | Phase 4: CLI Enhancements | ✅ Complete | MCP server, workspace support, plan/task commands |
 | Phase 5: Init Overhaul | ✅ Complete | Docker/Qdrant auto-setup, plugin install |
 | Phase 6: Legacy Hooks | ⚠️ Partial | Deprecation notice added, full removal deferred |
-| Testing | 🔄 In Progress | Migration tested, plugin testing pending |
+| Phase 7: Sync & Hooks | ✅ Complete | Real-time hooks, plan extraction, git sync |
+| Testing | ✅ Mostly Complete | Integration tests pass, plugin testing pending |
 | Documentation | ✅ Complete | README, CLAUDE.md, MIGRATION.md updated |
 
 ---
