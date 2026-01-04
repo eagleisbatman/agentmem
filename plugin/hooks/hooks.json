@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "am context --query \"$PROMPT\" --format markdown 2>/dev/null || echo ''"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "am sync 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}

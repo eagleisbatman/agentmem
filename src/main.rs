@@ -4,8 +4,11 @@ pub mod db;
 pub mod embedding;
 pub mod hooks;
 pub mod init;
+pub mod mcp;
 pub mod memory;
+pub mod plans;
 pub mod retrieval;
+pub mod sessions;
 pub mod sync;
 pub mod tasks;
 
@@ -136,6 +139,13 @@ enum Commands {
         #[command(subcommand)]
         command: SessionCommands,
     },
+    /// Manage plans
+    Plan {
+        #[command(subcommand)]
+        command: PlanCommands,
+    },
+    /// Run MCP server (for Claude Code plugin)
+    McpServer,
 }
 
 #[derive(Subcommand)]
@@ -154,6 +164,26 @@ enum TaskCommands {
         json: bool,
     },
     Ready {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Update task status (open, in_progress, closed)
+    Update {
+        id: String,
+        #[arg(long)]
+        status: String,
+        #[arg(long)]
+        notes: Option<String>,
+    },
+    /// Show task history
+    History {
+        id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show task details
+    Show {
+        id: String,
         #[arg(long)]
         json: bool,
     },
@@ -256,6 +286,68 @@ enum SessionCommands {
     },
     /// Show current session status
     Status,
+    /// List recent sessions
+    List {
+        #[arg(long, default_value_t = 10)]
+        limit: i32,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Save TodoWrite state
+    SaveTodos {
+        /// JSON representation of TodoWrite state
+        snapshot_json: String,
+    },
+    /// Get latest TodoWrite state
+    GetTodos {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum PlanCommands {
+    /// Create a new plan
+    Create {
+        title: String,
+        #[arg(short, long)]
+        content: Option<String>,
+        #[arg(long)]
+        file: Option<String>,
+    },
+    /// List all plans
+    List {
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show plan details
+    Show {
+        id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Complete a plan
+    Complete {
+        id: String,
+    },
+    /// Abandon a plan
+    Abandon {
+        id: String,
+    },
+    /// Link a task to a plan
+    Link {
+        plan_id: String,
+        task_id: String,
+        #[arg(long, default_value_t = 0)]
+        order: i32,
+    },
+    /// Get the active plan
+    Active {
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[tokio::main]
@@ -295,6 +387,50 @@ async fn main() -> Result<()> {
                         for t in tasks {
                             println!("[P{}] {}: {} ({})", t.priority, t.id, t.title, t.status);
                         }
+                    }
+                },
+                TaskCommands::Update { id, status, notes } => {
+                    crate::tasks::service::update_task_status(&conn, &id, &status, "user", notes.as_deref())?;
+                    println!("Updated task {} to status: {}", id, status);
+                },
+                TaskCommands::History { id, json } => {
+                    let history = crate::tasks::service::get_task_history(&conn, &id)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&history)?);
+                    } else {
+                        if history.is_empty() {
+                            println!("No history for task: {}", id);
+                        } else {
+                            println!("History for {}:", id);
+                            for h in history {
+                                println!("  {} -> {} (by {} at {})",
+                                    h.old_status.as_deref().unwrap_or("created"),
+                                    h.new_status,
+                                    h.changed_by,
+                                    h.changed_at.format("%Y-%m-%d %H:%M")
+                                );
+                            }
+                        }
+                    }
+                },
+                TaskCommands::Show { id, json } => {
+                    if let Some(task) = crate::tasks::service::get_task(&conn, &id)? {
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&task)?);
+                        } else {
+                            println!("Task: {} ({})", task.title, task.status);
+                            println!("  ID: {}", task.id);
+                            println!("  Priority: {}", task.priority);
+                            println!("  Type: {}", task.task_type);
+                            if let Some(d) = task.description {
+                                println!("  Description: {}", d);
+                            }
+                            if let Some(n) = task.notes {
+                                println!("  Notes: {}", n);
+                            }
+                        }
+                    } else {
+                        println!("Task not found: {}", id);
                     }
                 },
             }
@@ -584,6 +720,12 @@ async fn main() -> Result<()> {
         },
         Commands::Session { command } => {
             run_session(command).await?;
+        },
+        Commands::Plan { command } => {
+            run_plan(command)?;
+        },
+        Commands::McpServer => {
+            crate::mcp::server::run_server()?;
         },
     }
 
@@ -1041,6 +1183,142 @@ async fn run_session(command: SessionCommands) -> Result<()> {
                 }
             } else {
                 println!("No active session");
+            }
+        }
+        SessionCommands::List { limit, json } => {
+            // Local session listing
+            let db_path = get_db_path();
+            if db_path.exists() {
+                let conn = get_connection(db_path)?;
+                let sessions = crate::sessions::service::list_sessions(&conn, limit)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&sessions)?);
+                } else {
+                    if sessions.is_empty() {
+                        println!("No sessions recorded.");
+                    } else {
+                        for s in sessions {
+                            println!("{}: {} ({}) - {}",
+                                s.id,
+                                s.agent.unwrap_or_else(|| "unknown".to_string()),
+                                s.status,
+                                s.started_at.format("%Y-%m-%d %H:%M")
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        SessionCommands::SaveTodos { snapshot_json } => {
+            let db_path = get_db_path();
+            if db_path.exists() {
+                let conn = get_connection(db_path)?;
+                // Get or create active session
+                let session_id = match crate::sessions::service::get_active_session(&conn)? {
+                    Some(s) => s.id,
+                    None => crate::sessions::service::start_session(&conn, Some("claude-code"), None)?,
+                };
+                let snap_id = crate::sessions::service::save_todowrite_snapshot(&conn, &session_id, &snapshot_json)?;
+                println!("Saved TodoWrite snapshot: {}", snap_id);
+            }
+        }
+        SessionCommands::GetTodos { json } => {
+            let db_path = get_db_path();
+            if db_path.exists() {
+                let conn = get_connection(db_path)?;
+                if let Some(snapshot) = crate::sessions::service::get_most_recent_snapshot(&conn)? {
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&snapshot)?);
+                    } else {
+                        println!("{}", snapshot.snapshot_json);
+                    }
+                } else {
+                    println!("No TodoWrite snapshot found.");
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Run plan commands
+fn run_plan(command: PlanCommands) -> Result<()> {
+    let db_path = get_db_path();
+    if !db_path.exists() {
+        anyhow::bail!("AgentMem not initialized. Run 'am init' first.");
+    }
+    let conn = get_connection(db_path)?;
+
+    match command {
+        PlanCommands::Create { title, content, file } => {
+            let id = crate::plans::service::create_plan(&conn, &title, content.as_deref(), file.as_deref())?;
+            println!("Created plan: {} \"{}\"", id, title);
+        }
+        PlanCommands::List { status, json } => {
+            let plans = crate::plans::service::list_plans(&conn, status.as_deref())?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&plans)?);
+            } else {
+                if plans.is_empty() {
+                    println!("No plans found.");
+                } else {
+                    for p in plans {
+                        println!("[{}] {}: {}", p.status, p.id, p.title);
+                    }
+                }
+            }
+        }
+        PlanCommands::Show { id, json } => {
+            if let Some(plan) = crate::plans::service::get_plan(&conn, &id)? {
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&plan)?);
+                } else {
+                    println!("Plan: {} ({})", plan.title, plan.status);
+                    println!("ID: {}", plan.id);
+                    if let Some(f) = plan.file_path {
+                        println!("File: {}", f);
+                    }
+                    if let Some(c) = plan.content {
+                        println!("\n{}", c);
+                    }
+                    // Show linked tasks
+                    let tasks = crate::plans::service::get_plan_tasks(&conn, &id)?;
+                    if !tasks.is_empty() {
+                        println!("\nLinked tasks:");
+                        for t in tasks {
+                            println!("  {} (order: {})", t.task_id, t.task_order);
+                        }
+                    }
+                }
+            } else {
+                println!("Plan not found: {}", id);
+            }
+        }
+        PlanCommands::Complete { id } => {
+            crate::plans::service::complete_plan(&conn, &id)?;
+            println!("Completed plan: {}", id);
+        }
+        PlanCommands::Abandon { id } => {
+            crate::plans::service::abandon_plan(&conn, &id)?;
+            println!("Abandoned plan: {}", id);
+        }
+        PlanCommands::Link { plan_id, task_id, order } => {
+            crate::plans::service::link_task_to_plan(&conn, &plan_id, &task_id, order)?;
+            println!("Linked task {} to plan {} (order: {})", task_id, plan_id, order);
+        }
+        PlanCommands::Active { json } => {
+            if let Some(plan) = crate::plans::service::get_active_plan(&conn)? {
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&plan)?);
+                } else {
+                    println!("Active plan: {} \"{}\"", plan.id, plan.title);
+                    if let Some(f) = plan.file_path {
+                        println!("  File: {}", f);
+                    }
+                }
+            } else {
+                println!("No active plan.");
             }
         }
     }

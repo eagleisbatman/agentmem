@@ -1,5 +1,5 @@
 use rusqlite::{params, Connection, Result};
-use crate::db::models::Memory;
+use crate::db::models::{Memory, ProtectedFile};
 use crate::config::{load_config, get_config_path};
 use crate::embedding::create_provider;
 use crate::embedding::qdrant::QdrantStore;
@@ -140,4 +140,21 @@ pub fn add_tool(conn: &Connection, location: &str, name: &str, description: Opti
         params![id, name, location, description, usage, now],
     )?;
     Ok(())
+}
+
+pub fn list_protected_files(conn: &Connection) -> Result<Vec<ProtectedFile>> {
+    let mut stmt = conn.prepare("SELECT pattern, reason, added_at FROM protected_files")?;
+    let file_iter = stmt.query_map([], |row| {
+        Ok(ProtectedFile {
+            pattern: row.get(0)?,
+            reason: row.get(1)?,
+            added_at: row.get(2)?,
+        })
+    })?;
+
+    let mut files = Vec::new();
+    for file in file_iter {
+        files.push(file?);
+    }
+    Ok(files)
 }

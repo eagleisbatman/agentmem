@@ -1,6 +1,9 @@
 embedding:
-  provider: none
+  provider: openai
   model: null
+qdrant:
+  url: http://localhost:6334
+  collection: agentmem_memories
 hooks:
   pre_prompt:
     enabled: true

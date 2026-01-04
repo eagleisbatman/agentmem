@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "agentmem": {
+      "command": "am",
+      "args": ["mcp-server"],
+      "description": "AgentMem memory system - provides persistent context for AI coding agents"
+    }
+  }
+}

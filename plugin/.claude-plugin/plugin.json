@@ -1,0 +1,8 @@
+{
+  "name": "agentmem",
+  "description": "Persistent memory for Claude Code - survives sessions and compaction. Automatically persists TodoWrite state, extracts learnings, and converts plans to tasks.",
+  "version": "2.0.0",
+  "author": {
+    "name": "AgentMem"
+  }
+}

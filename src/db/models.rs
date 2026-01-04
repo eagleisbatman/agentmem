@@ -62,3 +62,65 @@ pub struct Entity {
     pub created_at: DateTime<Utc>,
 }
 
+// ============================================
+// AgentMem 2.0 Models
+// ============================================
+
+/// Plan from plan mode - stores implementation plans
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Plan {
+    pub id: String,
+    pub title: String,
+    pub content: Option<String>,
+    pub file_path: Option<String>,
+    pub status: String, // active, completed, abandoned
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
+}
+
+/// Link between a plan and its tasks
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PlanTask {
+    pub plan_id: String,
+    pub task_id: String,
+    pub task_order: i32,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Snapshot of TodoWrite state for session persistence
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TodoWriteSnapshot {
+    pub id: String,
+    pub session_id: String,
+    pub snapshot_json: String, // JSON representation of TodoWrite state
+    pub captured_at: DateTime<Utc>,
+}
+
+/// Session tracking for continuity across sessions
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Session {
+    pub id: String,
+    pub started_at: DateTime<Utc>,
+    pub ended_at: Option<DateTime<Utc>>,
+    pub status: String, // active, completed, compacted
+    pub agent: Option<String>,
+    pub model: Option<String>,
+    pub tokens_in: i32,
+    pub tokens_out: i32,
+    pub last_task_id: Option<String>,
+    pub summary: Option<String>,
+}
+
+/// Task status change history
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TaskHistory {
+    pub id: String,
+    pub task_id: String,
+    pub old_status: Option<String>,
+    pub new_status: String,
+    pub changed_at: DateTime<Utc>,
+    pub changed_by: String, // user, agent, hook
+    pub notes: Option<String>,
+}
+
