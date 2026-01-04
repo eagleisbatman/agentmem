@@ -128,31 +128,42 @@ pub fn get_task(conn: &Connection, task_id: &str) -> Result<Option<Task>> {
 }
 
 /// Update a task's status and record history
+/// Returns an error if the task doesn't exist
 pub fn update_task_status(conn: &Connection, task_id: &str, new_status: &str, changed_by: &str, notes: Option<&str>) -> Result<()> {
     let now = Utc::now();
 
-    // Get current status
-    let old_status: Option<String> = conn.query_row(
+    // Get current status - fail if task doesn't exist
+    let old_status: String = conn.query_row(
         "SELECT status FROM tasks WHERE id = ?1",
         params![task_id],
         |row| row.get(0)
-    ).ok();
+    ).map_err(|e| match e {
+        rusqlite::Error::QueryReturnedNoRows => {
+            rusqlite::Error::QueryReturnedNoRows
+        }
+        other => other
+    })?;
 
     // Update the task
-    if new_status == "closed" {
+    let rows_affected = if new_status == "closed" {
         conn.execute(
             "UPDATE tasks SET status = ?1, updated_at = ?2, closed_at = ?2 WHERE id = ?3",
             params![new_status, now, task_id],
-        )?;
+        )?
     } else {
         conn.execute(
             "UPDATE tasks SET status = ?1, updated_at = ?2 WHERE id = ?3",
             params![new_status, now, task_id],
-        )?;
+        )?
+    };
+
+    // Double-check rows were affected (shouldn't fail after SELECT succeeded, but be safe)
+    if rows_affected == 0 {
+        return Err(rusqlite::Error::QueryReturnedNoRows);
     }
 
     // Record history
-    record_task_history(conn, task_id, old_status.as_deref(), new_status, changed_by, notes)?;
+    record_task_history(conn, task_id, Some(&old_status), new_status, changed_by, notes)?;
 
     Ok(())
 }
