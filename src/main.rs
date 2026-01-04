@@ -1149,6 +1149,27 @@ async fn run_session(command: SessionCommands) -> Result<()> {
             }
             return Ok(());
         }
+        SessionCommands::Start { agent, model } => {
+            // Start local session first
+            let db_path = get_db_path();
+            if db_path.exists() {
+                let conn = get_connection(db_path)?;
+                // Check if there's already an active session
+                if let Some(existing) = crate::sessions::service::get_active_session(&conn)? {
+                    // Reuse existing session
+                    println!("Session active: {}", existing.id);
+                    return Ok(());
+                }
+                // Create new local session
+                let session_id = crate::sessions::service::start_session(
+                    &conn,
+                    agent.as_deref(),
+                    model.as_deref(),
+                )?;
+                println!("Session started: {}", session_id);
+            }
+            return Ok(()); // Local-only for now
+        }
         SessionCommands::End { .. } => {
             // End local session first
             let db_path = get_db_path();
@@ -1156,7 +1177,7 @@ async fn run_session(command: SessionCommands) -> Result<()> {
                 let conn = get_connection(db_path)?;
                 if let Some(session) = crate::sessions::service::get_active_session(&conn)? {
                     crate::sessions::service::end_session(&conn, &session.id, None)?;
-                    println!("Local session ended: {}", session.id);
+                    println!("Session ended: {}", session.id);
                 }
             }
             // Continue to cloud session end if authenticated
