@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "am session end 2>/dev/null || true; am sync 2>/dev/null || true"
+            "command": "node ~/.claude/plugins/agentmem/hooks/post-session.js"
           }
         ]
       }
