@@ -1093,7 +1093,66 @@ async fn run_auth(command: AuthCommands) -> Result<()> {
 async fn run_session(command: SessionCommands) -> Result<()> {
     use crate::api::{ApiClient, CreateSessionRequest, UpdateSessionRequest, Session, get_api_credentials, get_machine_id};
 
-    // Check if authenticated
+    // Handle local-only commands first (don't require cloud auth)
+    match &command {
+        SessionCommands::List { limit, json } => {
+            let db_path = get_db_path();
+            if db_path.exists() {
+                let conn = get_connection(db_path)?;
+                let sessions = crate::sessions::service::list_sessions(&conn, *limit)?;
+                if *json {
+                    println!("{}", serde_json::to_string_pretty(&sessions)?);
+                } else {
+                    if sessions.is_empty() {
+                        println!("No sessions recorded.");
+                    } else {
+                        for s in sessions {
+                            println!("{}: {} ({}) - {}",
+                                s.id,
+                                s.agent.clone().unwrap_or_else(|| "unknown".to_string()),
+                                s.status,
+                                s.started_at.format("%Y-%m-%d %H:%M")
+                            );
+                        }
+                    }
+                }
+            }
+            return Ok(());
+        }
+        SessionCommands::SaveTodos { snapshot_json } => {
+            let db_path = get_db_path();
+            if db_path.exists() {
+                let conn = get_connection(db_path)?;
+                // Get or create active session
+                let session_id = match crate::sessions::service::get_active_session(&conn)? {
+                    Some(s) => s.id,
+                    None => crate::sessions::service::start_session(&conn, Some("claude-code"), None)?,
+                };
+                let snap_id = crate::sessions::service::save_todowrite_snapshot(&conn, &session_id, snapshot_json)?;
+                println!("Saved TodoWrite snapshot: {}", snap_id);
+            }
+            return Ok(());
+        }
+        SessionCommands::GetTodos { json } => {
+            let db_path = get_db_path();
+            if db_path.exists() {
+                let conn = get_connection(db_path)?;
+                if let Some(snapshot) = crate::sessions::service::get_most_recent_snapshot(&conn)? {
+                    if *json {
+                        println!("{}", serde_json::to_string_pretty(&snapshot)?);
+                    } else {
+                        println!("{}", snapshot.snapshot_json);
+                    }
+                } else {
+                    println!("No TodoWrite snapshot found.");
+                }
+            }
+            return Ok(());
+        }
+        _ => {} // Continue to cloud commands
+    }
+
+    // Cloud commands require authentication
     if get_api_credentials()?.is_none() {
         // Silently skip if not authenticated (hooks should not fail)
         return Ok(());
@@ -1185,57 +1244,9 @@ async fn run_session(command: SessionCommands) -> Result<()> {
                 println!("No active session");
             }
         }
-        SessionCommands::List { limit, json } => {
-            // Local session listing
-            let db_path = get_db_path();
-            if db_path.exists() {
-                let conn = get_connection(db_path)?;
-                let sessions = crate::sessions::service::list_sessions(&conn, limit)?;
-                if json {
-                    println!("{}", serde_json::to_string_pretty(&sessions)?);
-                } else {
-                    if sessions.is_empty() {
-                        println!("No sessions recorded.");
-                    } else {
-                        for s in sessions {
-                            println!("{}: {} ({}) - {}",
-                                s.id,
-                                s.agent.unwrap_or_else(|| "unknown".to_string()),
-                                s.status,
-                                s.started_at.format("%Y-%m-%d %H:%M")
-                            );
-                        }
-                    }
-                }
-            }
-        }
-        SessionCommands::SaveTodos { snapshot_json } => {
-            let db_path = get_db_path();
-            if db_path.exists() {
-                let conn = get_connection(db_path)?;
-                // Get or create active session
-                let session_id = match crate::sessions::service::get_active_session(&conn)? {
-                    Some(s) => s.id,
-                    None => crate::sessions::service::start_session(&conn, Some("claude-code"), None)?,
-                };
-                let snap_id = crate::sessions::service::save_todowrite_snapshot(&conn, &session_id, &snapshot_json)?;
-                println!("Saved TodoWrite snapshot: {}", snap_id);
-            }
-        }
-        SessionCommands::GetTodos { json } => {
-            let db_path = get_db_path();
-            if db_path.exists() {
-                let conn = get_connection(db_path)?;
-                if let Some(snapshot) = crate::sessions::service::get_most_recent_snapshot(&conn)? {
-                    if json {
-                        println!("{}", serde_json::to_string_pretty(&snapshot)?);
-                    } else {
-                        println!("{}", snapshot.snapshot_json);
-                    }
-                } else {
-                    println!("No TodoWrite snapshot found.");
-                }
-            }
+        // Local commands already handled above
+        SessionCommands::List { .. } | SessionCommands::SaveTodos { .. } | SessionCommands::GetTodos { .. } => {
+            unreachable!("Local commands handled above");
         }
     }
 
