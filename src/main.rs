@@ -99,6 +99,9 @@ enum Commands {
     Import {
         #[arg(short, long)]
         path: Option<String>,
+        /// Regenerate embeddings for imported memories
+        #[arg(long)]
+        embed: bool,
     },
     /// Manage hooks for AI agents
     Hook {
@@ -610,8 +613,24 @@ async fn main() -> Result<()> {
             export_to_jsonl(&conn, ".agentmem/agentmem.jsonl")?;
             match git_sync(push, message.as_deref())? {
                 crate::sync::GitSyncResult::Synced => println!("✓ Synced with git"),
+                crate::sync::GitSyncResult::SyncedWithPull => {
+                    // Import any changes that came from the pull
+                    println!("✓ Pulled remote changes");
+                    import_from_jsonl(&conn, ".agentmem/agentmem.jsonl")?;
+                    println!("✓ Imported remote memories");
+                    // Re-export to merge local + remote
+                    export_to_jsonl(&conn, ".agentmem/agentmem.jsonl")?;
+                    println!("✓ Synced with git");
+                }
                 crate::sync::GitSyncResult::NoChanges => println!("✓ No changes to sync"),
                 crate::sync::GitSyncResult::NotAGitRepo => println!("⚠ Not a git repository - memories saved locally only"),
+                crate::sync::GitSyncResult::PullConflict => {
+                    println!("⚠ Pull conflict - please resolve manually:");
+                    println!("  1. Run: git pull --rebase");
+                    println!("  2. Resolve conflicts in .agentmem/agentmem.jsonl");
+                    println!("  3. Run: am import");
+                    println!("  4. Run: am sync --push");
+                }
             }
         },
         Commands::Export { path } => {
@@ -624,12 +643,18 @@ async fn main() -> Result<()> {
             export_to_jsonl(&conn, export_path)?;
             println!("✓ Exported to JSONL");
         },
-        Commands::Import { path } => {
+        Commands::Import { path, embed } => {
             let db_path = get_db_path();
             let conn = get_connection(db_path)?;
             let import_path = path.unwrap_or_else(|| ".agentmem/agentmem.jsonl".to_string());
-            import_from_jsonl(&conn, import_path)?;
-            println!("✓ Imported from JSONL");
+            import_from_jsonl(&conn, &import_path)?;
+            println!("✓ Imported from JSONL: {}", import_path);
+
+            if embed {
+                println!("Regenerating embeddings...");
+                let (embedded, total) = crate::memory::service::regenerate_all_embeddings(&conn).await?;
+                println!("✓ Regenerated embeddings: {}/{} memories", embedded, total);
+            }
         },
         Commands::Hook { command } => {
             let db_path = get_db_path();

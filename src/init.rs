@@ -470,9 +470,42 @@ pub fn run_init(quiet: bool, embedding: Option<String>, model: Option<String>) -
         println!("  {} Initialized database", "✓");
     }
 
-    // Create agentmem.jsonl (placeholder if doesn't exist)
+    // Check for existing JSONL file (from git clone) and import if database is fresh
     let jsonl_path = am_dir.join("agentmem.jsonl");
-    if !jsonl_path.exists() {
+    if jsonl_path.exists() {
+        // Check if JSONL has content and database is empty
+        let jsonl_content = fs::read_to_string(&jsonl_path).unwrap_or_default();
+        if !jsonl_content.trim().is_empty() {
+            // Check if database has any memories
+            let memory_count: i64 = _conn.query_row(
+                "SELECT COUNT(*) FROM memories",
+                [],
+                |row| row.get(0)
+            ).unwrap_or(0);
+
+            if memory_count == 0 {
+                if !quiet {
+                    println!();
+                    println!("  Found existing agentmem.jsonl - importing...");
+                }
+                if let Err(e) = crate::sync::import_from_jsonl(&_conn, &jsonl_path) {
+                    if !quiet {
+                        println!("  {} Failed to import: {}", "!", e);
+                    }
+                } else {
+                    let imported: i64 = _conn.query_row(
+                        "SELECT COUNT(*) FROM memories",
+                        [],
+                        |row| row.get(0)
+                    ).unwrap_or(0);
+                    if !quiet {
+                        println!("  {} Imported {} memories from JSONL", "✓", imported);
+                    }
+                }
+            }
+        }
+    } else {
+        // Create empty JSONL file
         fs::write(&jsonl_path, "").context("Failed to create agentmem.jsonl")?;
     }
 

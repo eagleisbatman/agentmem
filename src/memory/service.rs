@@ -142,6 +142,41 @@ pub fn add_tool(conn: &Connection, location: &str, name: &str, description: Opti
     Ok(())
 }
 
+/// Regenerate embedding for an existing memory (used after import)
+pub async fn regenerate_embedding(
+    memory_id: &str,
+    memory_type: &str,
+    title: &str,
+    content: Option<&str>,
+) -> AnyhowResult<bool> {
+    match try_embed_memory(memory_id, memory_type, title, content).await {
+        Ok(_) => Ok(true),
+        Err(_) => Ok(false), // Silently fail - embedding is optional
+    }
+}
+
+/// Regenerate embeddings for all memories in the database
+pub async fn regenerate_all_embeddings(conn: &Connection) -> AnyhowResult<(usize, usize)> {
+    let memories = list_memories(conn)
+        .map_err(|e| anyhow::anyhow!("Failed to list memories: {}", e))?;
+
+    let total = memories.len();
+    let mut embedded = 0;
+
+    for memory in memories {
+        if regenerate_embedding(
+            &memory.id.to_string(),
+            &memory.memory_type,
+            &memory.title,
+            memory.content.as_deref(),
+        ).await? {
+            embedded += 1;
+        }
+    }
+
+    Ok((embedded, total))
+}
+
 pub fn list_protected_files(conn: &Connection) -> Result<Vec<ProtectedFile>> {
     let mut stmt = conn.prepare("SELECT pattern, reason, added_at FROM protected_files")?;
     let file_iter = stmt.query_map([], |row| {
