@@ -72,8 +72,54 @@ process.stdin.on('end', () => {
       }
     }
 
-    // Output success (don't block tool execution)
-    console.log(JSON.stringify({}));
+    // Detect significant events that warrant memory saves
+    let memoryPrompt = null;
+
+    // After git commit - likely completed a feature/fix
+    if (tool_name === 'Bash' && tool_input && tool_input.command) {
+      const cmd = tool_input.command;
+      if (cmd.includes('git commit') && tool_response && !tool_response.includes('error') && !tool_response.includes('failed')) {
+        memoryPrompt = `## Memory Save Recommended
+
+You just committed code. Before moving on, save what you learned:
+
+\`\`\`bash
+am mem add decision "<what you implemented>" --content "<key decisions made>"
+\`\`\`
+
+If you fixed a bug, also run:
+\`\`\`bash
+am mem add gotcha "<what broke>" --content "<cause and fix>"
+\`\`\`
+`;
+      }
+    }
+
+    // After successful build/test - good checkpoint
+    if (tool_name === 'Bash' && tool_input && tool_input.command) {
+      const cmd = tool_input.command;
+      if ((cmd.includes('cargo build') || cmd.includes('npm run build') || cmd.includes('cargo test') || cmd.includes('npm test'))
+          && tool_response && !tool_response.includes('error') && !tool_response.includes('FAILED')) {
+        // Only prompt if this is a significant build (not just a quick check)
+        if (tool_response && tool_response.length > 500) {
+          memoryPrompt = `## Build/Test Passed - Consider Saving
+
+If you made significant changes, save them:
+\`\`\`bash
+am mem add decision "<what changed>" --content "<details>"
+\`\`\`
+`;
+        }
+      }
+    }
+
+    // Output memory prompt if any
+    if (memoryPrompt) {
+      console.log(memoryPrompt);
+    } else {
+      // Output success (don't block tool execution)
+      console.log(JSON.stringify({}));
+    }
 
   } catch (error) {
     // Silently fail

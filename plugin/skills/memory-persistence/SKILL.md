@@ -5,96 +5,137 @@ description: Automatically persist session state and extract learnings. Use when
 
 # Memory Persistence Skill
 
-You have access to AgentMem for persistent memory across sessions. Use this skill to preserve important learnings automatically.
+**CRITICAL**: You MUST use AgentMem to save learnings during every session. Do NOT wait until the end - save as you go. If you complete work without saving memories, knowledge is LOST.
 
-## When to Trigger
+## MANDATORY Save Points
 
-### 1. User Corrections
-When the user corrects you with phrases like:
-- "No, use X instead"
-- "Actually, it should be..."
-- "That's wrong, do it this way"
-- "Don't do that"
+You MUST run `am mem add` immediately after ANY of these events:
 
-**Action**: Run `am mem add correction "<what you learned>" --content "<details>"`
+### 1. After Completing Any Feature or Fix
+When you finish implementing something:
+```bash
+am mem add decision "<what was implemented>" --content "<key design choices and why>"
+```
 
-### 2. Decisions Made
-When a decision is reached about:
-- Technology choices ("Let's use PostgreSQL")
-- Architecture patterns ("We'll use microservices")
-- Conventions ("Use camelCase for variables")
+### 2. After Fixing Any Bug
+When you fix an issue:
+```bash
+am mem add gotcha "<what broke>" --content "<root cause and solution>"
+```
 
-**Action**: Run `am mem add decision "<decision>" --content "<reasoning>"`
+### 3. When User Corrects You
+Phrases like "no", "actually", "that's wrong", "use X instead":
+```bash
+am mem add correction "<what you learned>" --content "<correct approach>"
+```
 
-### 3. Things That Broke (Gotchas)
-When something fails unexpectedly:
-- Build errors with non-obvious causes
-- Runtime issues
-- Configuration problems
-- API quirks
+### 4. After Architecture/Design Decisions
+Technology choices, patterns, conventions:
+```bash
+am mem add decision "<decision>" --content "<reasoning and trade-offs>"
+```
 
-**Action**: Run `am mem add gotcha "<what broke>" --content "<why and how to fix>"`
+### 5. After Discovering Codebase Patterns
+When you learn how the codebase works:
+```bash
+am mem add pattern "<pattern name>" --content "<how it works and where>"
+```
 
-### 4. Infrastructure Details
-When you learn about:
-- API endpoints
-- Database connections
-- Environment variables
-- Service URLs
+### 6. After Finding Non-Obvious Information
+API endpoints, env vars, config, credentials location:
+```bash
+am mem add infrastructure "<what>" --content "<details>"
+```
 
-**Action**: Run `am mem add infrastructure "<what>" --content "<details>"`
+## Periodic Checkpoints
 
-### 5. Existing Tools/Scripts
-When you discover or are told about:
-- Existing utility scripts
-- Build commands
-- Test runners
-- Deployment tools
+**Every 5-10 messages**, pause and ask yourself:
+- Did I learn anything worth saving?
+- Did I make any decisions?
+- Did anything break that I fixed?
+- Did the user teach me something?
 
-**Action**: Run `am tool "<path>" "<description>" "<usage>"`
+If yes to ANY, save immediately.
 
-### 6. Protected Files
-When the user indicates a file shouldn't be changed:
-- "Don't modify this file"
-- "This is working, leave it alone"
-- Config files that are sensitive
+## Batch Save Checklist
 
-**Action**: Run `am protect "<file>" "<reason>"`
+Before responding to a user message that wraps up a piece of work, run through this checklist:
+
+```
+[ ] Decisions made this session?     → am mem add decision ...
+[ ] Bugs fixed?                      → am mem add gotcha ...
+[ ] User corrections?                → am mem add correction ...
+[ ] New patterns discovered?         → am mem add pattern ...
+[ ] Infrastructure learned?          → am mem add infrastructure ...
+[ ] Tools/scripts discovered?        → am tool ...
+[ ] Files to protect?                → am protect ...
+```
+
+## Memory Types Reference
+
+| Type | When to Use |
+|------|-------------|
+| `decision` | Architecture choices, technology picks, design patterns |
+| `correction` | User corrected your understanding or approach |
+| `gotcha` | Something broke unexpectedly, non-obvious fix |
+| `pattern` | Recurring code pattern in this codebase |
+| `infrastructure` | API endpoints, env vars, URLs, credentials |
+| `insight` | General learning that doesn't fit other categories |
+
+## Anti-Patterns (DO NOT)
+
+- DO NOT wait until session end to save
+- DO NOT assume you'll remember next session
+- DO NOT skip saving because "it's obvious"
+- DO NOT save trivial/obvious facts (e.g., "React uses JSX")
+- DO NOT duplicate existing memories (check with `am mem list` first)
 
 ## Session End Behavior
 
-When the session is ending or you detect context compaction:
+When session is ending or you detect compaction warnings:
 
-1. Review the conversation for any unrecorded learnings
-2. Run `am mem add` for each important learning
+1. **IMMEDIATELY** review conversation for unsaved learnings
+2. Batch save anything missed
 3. Run `am sync` to persist to git
 
-## TodoWrite State Persistence
-
-When you use the TodoWrite tool to track tasks:
-
-1. The current state is automatically captured by hooks
-2. At session end, the state is saved to AgentMem
-3. Next session, the pre-prompt hook restores your task context
-
-You don't need to manually save TodoWrite state - just use it normally.
-
-## Best Practices
-
-- Be proactive: Don't wait to be asked to save memories
-- Be concise: Titles should be 5-10 words
-- Include context: The content field should explain "why" not just "what"
-- Avoid noise: Only save genuinely useful learnings, not obvious facts
-- Deduplicate: Before adding, consider if you already know this
-
-## Example Workflow
+## Example: Complete Feature Flow
 
 ```
-User: "The API endpoint is https://api.myapp.com/v2, not v1"
+1. User: "Add user authentication"
 
-You detect: This is a correction about infrastructure
+2. You implement it, making decisions along the way
 
-Run: am mem add correction "API is v2 not v1" --content "Production API endpoint is https://api.myapp.com/v2. The v1 endpoint is deprecated."
+3. BEFORE responding "Done!", run:
+   am mem add decision "JWT auth with refresh tokens" \
+     --content "Used JWT for stateless auth. Access token 15min, refresh 7d. Stored in httpOnly cookies. Chose bcrypt for password hashing."
 
-Report: "I've saved that the API uses v2. I won't make that mistake again."
+4. If something broke during implementation:
+   am mem add gotcha "Prisma client not regenerating" \
+     --content "After schema changes, must run 'npx prisma generate' before 'npm run dev'. The dev server doesn't auto-regenerate."
+
+5. Now respond to user
 ```
+
+## Commands Quick Reference
+
+```bash
+# Add memory
+am mem add <type> "<title>" --content "<details>"
+
+# List existing (check before adding)
+am mem list
+
+# Search memories
+am mem search "<query>"
+
+# Sync to git
+am sync
+
+# Protect file
+am protect "<path>" "<reason>"
+
+# Register tool
+am tool "<path>" "<description>" "<usage>"
+```
+
+Remember: **Unsaved memories are lost memories.** Save early, save often.

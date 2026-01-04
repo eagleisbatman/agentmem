@@ -2,6 +2,7 @@
 const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 // Check if AgentMem is initialized in this project
 function findAgentMemDir() {
@@ -13,6 +14,23 @@ function findAgentMemDir() {
     dir = path.dirname(dir);
   }
   return null;
+}
+
+// Message counter for periodic reminders
+function getMessageCount(amDir) {
+  const counterFile = path.join(os.tmpdir(), `agentmem-counter-${Buffer.from(amDir).toString('base64').slice(0, 20)}`);
+  try {
+    return parseInt(fs.readFileSync(counterFile, 'utf8')) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+function incrementMessageCount(amDir) {
+  const counterFile = path.join(os.tmpdir(), `agentmem-counter-${Buffer.from(amDir).toString('base64').slice(0, 20)}`);
+  const count = getMessageCount(amDir) + 1;
+  fs.writeFileSync(counterFile, count.toString());
+  return count;
 }
 
 // Read input from stdin
@@ -46,6 +64,9 @@ Run \`am doctor\` to check system requirements.
 `);
       return;
     }
+
+    // Track message count for periodic reminders
+    const messageCount = incrementMessageCount(amDir);
 
     // Start session
     try {
@@ -139,6 +160,19 @@ Run \`am doctor\` to check system requirements.
       }
     } catch (e) {
       // No context or error - continue
+    }
+
+    // Periodic memory checkpoint reminder (every 10 messages)
+    if (messageCount > 0 && messageCount % 10 === 0) {
+      contextParts.push(`## Memory Checkpoint (Message ${messageCount})
+
+**Pause and save any learnings before continuing.** Ask yourself:
+- Did I make any decisions worth remembering?
+- Did I fix any bugs or discover gotchas?
+- Did the user correct me on anything?
+
+If yes, run \`am mem add <type> "<title>" --content "<details>"\` now.
+`);
     }
 
     // Output combined context
