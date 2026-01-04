@@ -213,6 +213,10 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
     // Add parent_task_id column to tasks (for subtasks)
     let _ = conn.execute("ALTER TABLE tasks ADD COLUMN parent_task_id TEXT REFERENCES tasks(id)", []);
 
+    // Add columns for sub-agent task queue coordination
+    let _ = conn.execute("ALTER TABLE tasks ADD COLUMN claimed_by TEXT", []);
+    let _ = conn.execute("ALTER TABLE tasks ADD COLUMN claimed_at DATETIME", []);
+
     // ============================================
     // Indexes
     // ============================================

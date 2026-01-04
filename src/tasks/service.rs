@@ -212,3 +212,151 @@ pub fn get_task_history(conn: &Connection, task_id: &str) -> Result<Vec<TaskHist
     }
     Ok(history)
 }
+
+// ============================================
+// Sub-Agent Task Queue Coordination
+// ============================================
+
+/// Claim a task for an agent (locks it from other agents)
+/// Returns Ok(true) if claimed, Ok(false) if already claimed by another
+pub fn claim_task(conn: &Connection, task_id: &str, agent_id: &str) -> Result<bool> {
+    let now = Utc::now();
+
+    // Check if task exists and is available
+    let claimed_by: Option<String> = conn.query_row(
+        "SELECT claimed_by FROM tasks WHERE id = ?1",
+        params![task_id],
+        |row| row.get(0)
+    )?;
+
+    // If already claimed by another agent, return false
+    if let Some(ref existing) = claimed_by {
+        if existing != agent_id {
+            return Ok(false);
+        }
+        // Already claimed by this agent - just return true
+        return Ok(true);
+    }
+
+    // Claim the task
+    conn.execute(
+        "UPDATE tasks SET claimed_by = ?1, claimed_at = ?2, status = 'in_progress', updated_at = ?2 WHERE id = ?3",
+        params![agent_id, now, task_id],
+    )?;
+
+    // Record in history
+    record_task_history(conn, task_id, Some("open"), "in_progress", agent_id, Some(&format!("Claimed by agent {}", agent_id)))?;
+
+    Ok(true)
+}
+
+/// Release a claimed task (makes it available again)
+pub fn release_task(conn: &Connection, task_id: &str, agent_id: &str) -> Result<bool> {
+    let now = Utc::now();
+
+    // Check if this agent owns the claim
+    let claimed_by: Option<String> = conn.query_row(
+        "SELECT claimed_by FROM tasks WHERE id = ?1",
+        params![task_id],
+        |row| row.get(0)
+    )?;
+
+    if let Some(ref existing) = claimed_by {
+        if existing != agent_id {
+            return Ok(false); // Can't release someone else's claim
+        }
+    } else {
+        return Ok(true); // Not claimed, nothing to release
+    }
+
+    // Release the claim
+    conn.execute(
+        "UPDATE tasks SET claimed_by = NULL, claimed_at = NULL, status = 'open', updated_at = ?1 WHERE id = ?2",
+        params![now, task_id],
+    )?;
+
+    // Record in history
+    record_task_history(conn, task_id, Some("in_progress"), "open", agent_id, Some("Released by agent"))?;
+
+    Ok(true)
+}
+
+/// Get the next available task (unclaimed, open, highest priority)
+pub fn get_next_available_task(conn: &Connection) -> Result<Option<Task>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, title, description, status, priority, type, labels, assignee, notes, created_at, updated_at, closed_at, closed_reason
+         FROM tasks
+         WHERE status = 'open' AND (claimed_by IS NULL OR claimed_by = '')
+         ORDER BY priority ASC, created_at ASC
+         LIMIT 1"
+    )?;
+
+    let mut rows = stmt.query([])?;
+    if let Some(row) = rows.next()? {
+        let labels_str: Option<String> = row.get(6)?;
+        let labels = if let Some(s) = labels_str {
+            serde_json::from_str(&s).unwrap_or_default()
+        } else {
+            vec![]
+        };
+
+        Ok(Some(Task {
+            id: row.get(0)?,
+            title: row.get(1)?,
+            description: row.get(2)?,
+            status: row.get(3)?,
+            priority: row.get(4)?,
+            task_type: row.get(5)?,
+            labels,
+            assignee: row.get(7)?,
+            notes: row.get(8)?,
+            created_at: row.get(9)?,
+            updated_at: row.get(10)?,
+            closed_at: row.get(11)?,
+            closed_reason: row.get(12)?,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Get all available tasks (unclaimed, open)
+pub fn get_available_tasks(conn: &Connection) -> Result<Vec<Task>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, title, description, status, priority, type, labels, assignee, notes, created_at, updated_at, closed_at, closed_reason
+         FROM tasks
+         WHERE status = 'open' AND (claimed_by IS NULL OR claimed_by = '')
+         ORDER BY priority ASC, created_at ASC"
+    )?;
+
+    let task_iter = stmt.query_map([], |row| {
+        let labels_str: Option<String> = row.get(6)?;
+        let labels = if let Some(s) = labels_str {
+            serde_json::from_str(&s).unwrap_or_default()
+        } else {
+            vec![]
+        };
+
+        Ok(Task {
+            id: row.get(0)?,
+            title: row.get(1)?,
+            description: row.get(2)?,
+            status: row.get(3)?,
+            priority: row.get(4)?,
+            task_type: row.get(5)?,
+            labels,
+            assignee: row.get(7)?,
+            notes: row.get(8)?,
+            created_at: row.get(9)?,
+            updated_at: row.get(10)?,
+            closed_at: row.get(11)?,
+            closed_reason: row.get(12)?,
+        })
+    })?;
+
+    let mut tasks = Vec::new();
+    for task in task_iter {
+        tasks.push(task?);
+    }
+    Ok(tasks)
+}

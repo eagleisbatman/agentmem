@@ -17,7 +17,7 @@ use anyhow::{Context, Result};
 use crate::init::run_init;
 use crate::config::get_db_path;
 use crate::db::get_connection;
-use crate::tasks::service::{create_task, list_tasks, get_ready_tasks};
+use crate::tasks::service::{create_task, list_tasks, get_ready_tasks, claim_task, release_task, get_next_available_task, get_available_tasks};
 use crate::memory::service::{add_memory_with_embedding, list_memories, add_protected_file, add_tool};
 use crate::sync::{export_to_jsonl, import_from_jsonl, git_sync};
 use crate::retrieval::context::{get_context_async, format_context_markdown};
@@ -187,6 +187,30 @@ enum TaskCommands {
     /// Show task details
     Show {
         id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Claim a task for an agent (sub-agent coordination)
+    Claim {
+        id: String,
+        #[arg(long)]
+        agent: String,
+    },
+    /// Release a claimed task
+    Release {
+        id: String,
+        #[arg(long)]
+        agent: String,
+    },
+    /// Get and claim the next available task
+    Next {
+        #[arg(long)]
+        agent: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List available (unclaimed) tasks
+    Available {
         #[arg(long)]
         json: bool,
     },
@@ -452,6 +476,53 @@ async fn main() -> Result<()> {
                         }
                     } else {
                         println!("Task not found: {}", id);
+                    }
+                },
+                TaskCommands::Claim { id, agent } => {
+                    match claim_task(&conn, &id, &agent)? {
+                        true => println!("✓ Task {} claimed by agent {}", id, agent),
+                        false => println!("✗ Task {} is already claimed by another agent", id),
+                    }
+                },
+                TaskCommands::Release { id, agent } => {
+                    match release_task(&conn, &id, &agent)? {
+                        true => println!("✓ Task {} released by agent {}", id, agent),
+                        false => println!("✗ Task {} is not claimed by agent {}", id, agent),
+                    }
+                },
+                TaskCommands::Next { agent, json } => {
+                    if let Some(task) = get_next_available_task(&conn)? {
+                        // Claim the task
+                        claim_task(&conn, &task.id, &agent)?;
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&task)?);
+                        } else {
+                            println!("✓ Claimed task: {} \"{}\"", task.id, task.title);
+                            if let Some(d) = &task.description {
+                                println!("  Description: {}", d);
+                            }
+                        }
+                    } else {
+                        if json {
+                            println!("null");
+                        } else {
+                            println!("No available tasks");
+                        }
+                    }
+                },
+                TaskCommands::Available { json } => {
+                    let tasks = get_available_tasks(&conn)?;
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&tasks)?);
+                    } else {
+                        if tasks.is_empty() {
+                            println!("No available tasks");
+                        } else {
+                            println!("Available tasks ({}):", tasks.len());
+                            for t in tasks {
+                                println!("  [P{}] {}: {}", t.priority, t.id, t.title);
+                            }
+                        }
                     }
                 },
             }

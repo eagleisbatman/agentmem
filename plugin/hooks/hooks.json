@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "am session start --agent claude-code 2>/dev/null || true; am context --query \"$PROMPT\" --format markdown 2>/dev/null || echo ''"
+            "command": "node ~/.claude/plugins/agentmem/hooks/user-prompt-submit.js"
           }
         ]
       }
