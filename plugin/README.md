@@ -2,107 +2,169 @@
 
 Persistent memory for Claude Code - survives sessions and compaction.
 
-## Installation
-
-### Development (Local Testing)
+## Quick Start
 
 ```bash
-claude --plugin-dir /path/to/agentmem/plugin
+# 1. Install the CLI
+cd /path/to/agentmem
+cargo build --release
+cp target/release/am ~/.local/bin/
+
+# 2. Initialize in your project
+cd your-project
+am init
+
+# 3. Start using Claude Code - context is auto-injected!
 ```
 
-### Production (Global Install)
+## What Works Automatically
 
+| Feature | When It Happens |
+|---------|-----------------|
+| Context injection | Start of each prompt (memories, tasks, protected files) |
+| Memory prompts | After git commits and successful builds |
+| Session cleanup | When session ends |
+
+## What Needs Manual Commands
+
+### Save Memories
 ```bash
-# Copy plugin to Claude's plugin directory
-cp -r plugin ~/.claude/plugins/agentmem
-
-# Install skills to user skills directory
-mkdir -p ~/.claude/skills/agentmem-memory
-mkdir -p ~/.claude/skills/agentmem-plan
-cp plugin/skills/memory-persistence/SKILL.md ~/.claude/skills/agentmem-memory/SKILL.md
-cp plugin/skills/plan-to-tasks/SKILL.md ~/.claude/skills/agentmem-plan/SKILL.md
-
-# Update skill names to match directories
-sed -i '' 's/name: memory-persistence/name: agentmem-memory/' ~/.claude/skills/agentmem-memory/SKILL.md
-sed -i '' 's/name: plan-to-tasks/name: agentmem-plan/' ~/.claude/skills/agentmem-plan/SKILL.md
+am mem add <type> <title> --content "<details>"
 ```
 
-> **Note**: Skills must be installed to `~/.claude/skills/` (not the plugin directory) for Claude Code to load them.
+Or use the slash command:
+```
+/agentmem:remember decision "Use PostgreSQL for the database"
+```
 
-## Prerequisites
+### After Creating a Plan
+```bash
+# Record the plan
+am plan create "Feature Implementation" --file path/to/plan.md
 
-1. **AgentMem CLI** must be installed and in PATH:
-   ```bash
-   cd /path/to/agentmem
-   cargo build --release
-   cp target/release/am ~/.local/bin/
-   ```
+# Extract tasks from it (uses GPT-4o)
+am plan extract-tasks --file path/to/plan.md
+```
 
-2. **Initialize AgentMem** in your project:
-   ```bash
-   cd your-project
-   am init
-   ```
+### Save TodoWrite State (before ending session)
+```bash
+# Copy the JSON from your current todo list
+am session save-todos '[{"content":"Task 1","status":"completed","activeForm":"..."}]'
+```
 
-## Features
+### Protect Files
+```bash
+am protect src/auth/core.ts --reason "Critical auth logic"
+```
+Or: `/agentmem:protect src/auth/core.ts`
 
-### Slash Commands
+## Slash Commands
 
 | Command | Description |
 |---------|-------------|
 | `/agentmem:remember <type> <title>` | Add a memory |
 | `/agentmem:protect <file>` | Mark file as protected |
-| `/agentmem:sync` | Sync to git |
+| `/agentmem:sync` | Export and push to git |
 | `/agentmem:context` | Show current context |
 | `/agentmem:status` | Check system health |
 
-### Skills (Auto-Invoked)
+## CLI Quick Reference
 
-**memory-persistence**: Automatically saves learnings when you:
-- Get corrected by the user
-- Make decisions
-- Encounter gotchas
-- Discover infrastructure details
+```bash
+# Context & Status
+am context              # See injected context (memories, tasks, files)
+am doctor               # Check system health
 
-**plan-to-tasks**: Converts implementation plans into trackable tasks.
+# Memories
+am mem add <type> <title> --content "<details>"
+am mem list             # List all memories
+am mem search "query"   # Semantic search (requires Qdrant)
 
-### Hooks
+# Tasks
+am task list            # List all tasks
+am task create "Title"  # Create a task
+am task update <id> <status>  # Update status
 
-- **UserPromptSubmit**: Injects relevant context before each prompt
-- **Stop**: Syncs data at session end
+# Plans
+am plan active          # See current plan
+am plan list            # List all plans
+am plan create "Title" --file plan.md
+am plan extract-tasks --file plan.md  # Extract tasks via GPT-4o
+am plan complete <id>   # Mark plan done
+
+# Sessions
+am session status       # Current session
+am session save-todos '<json>'  # Save TodoWrite state
+am session get-todos    # Restore last TodoWrite state
+
+# Sync
+am sync                 # Export to JSONL and git push
+am sync --pull          # Pull and import from git
+```
 
 ## Memory Types
 
-| Type | Description |
-|------|-------------|
-| `decision` | Architectural/technical choices |
-| `correction` | User corrections |
-| `gotcha` | Things that broke |
-| `pattern` | Repeated behaviors |
-| `infrastructure` | URLs, endpoints, configs |
-| `tool` | Scripts and utilities |
-| `protected` | Files not to modify |
-| `insight` | Non-obvious discoveries |
+| Type | Use For | Example |
+|------|---------|---------|
+| `decision` | Architectural choices | "Use React Query for data fetching" |
+| `correction` | User corrections | "Don't use deprecated API" |
+| `gotcha` | Things that broke | "Build fails without NODE_ENV" |
+| `pattern` | Repeated behaviors | "Always run tests before commit" |
+| `infrastructure` | URLs, configs | "API endpoint: api.example.com" |
+| `tool` | Scripts, utilities | "Use scripts/deploy.sh for deploys" |
+| `protected` | Files not to modify | "Don't touch auth/core.ts" |
+| `insight` | Non-obvious discoveries | "Performance bottleneck in query X" |
 
-## How It Works
+## Skills (Auto-Invoked)
 
-1. **Pre-prompt**: Context is injected showing protected files, tasks, and relevant memories
-2. **During session**: Skills detect learnings and save them automatically
-3. **Session end**: Data is synced to git for persistence
+**memory-persistence**: Prompts you to save learnings when:
+- You make architectural decisions
+- User corrects you
+- You encounter gotchas
+- You discover infrastructure details
+
+**plan-to-tasks**: Reminds you to extract tasks after creating a plan.
+
+## Workflow Example
+
+```bash
+# Start of day - see what you were working on
+am context
+am task list
+
+# After making a decision
+am mem add decision "Use JWT for auth" --content "Chose JWT over sessions for stateless API"
+
+# After creating a plan in Claude
+am plan create "Auth System" --file ~/.claude/plans/auth-plan.md
+am plan extract-tasks --file ~/.claude/plans/auth-plan.md
+
+# Before ending session - save your todos
+am session save-todos '[...your current todos...]'
+
+# End of day - sync everything
+am sync
+```
 
 ## Troubleshooting
 
-Check status:
+### Check if AgentMem is initialized
 ```bash
+ls -la .agentmem/
 am doctor
 ```
 
-View context:
+### View what context Claude sees
 ```bash
 am context --format markdown
 ```
 
-List memories:
+### Rebuild and reinstall CLI
 ```bash
-am mem list
+cd /path/to/agentmem
+cargo build --release
+cp target/release/am ~/.local/bin/
 ```
+
+### Check plugin is loaded
+Look for `agentmem@local` in Claude Code's plugin list.
