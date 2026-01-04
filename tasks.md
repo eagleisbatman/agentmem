@@ -199,21 +199,21 @@
 
 ---
 
-## Documentation
+## Documentation ✅
 
 ### D1. Update README.md
-- [ ] New installation instructions (plugin-based)
-- [ ] Remove hook installation section
-- [ ] Add plugin commands reference
+- [x] New installation instructions (plugin-based)
+- [x] Remove hook installation section
+- [x] Add plugin commands reference
 
 ### D2. Create MIGRATION.md
-- [ ] Guide for 1.x users upgrading to 2.0
-- [ ] Breaking changes list
-- [ ] Data migration steps (if any)
+- [x] Guide for 1.x users upgrading to 2.0
+- [x] Breaking changes list
+- [x] Data migration steps (if any)
 
 ### D3. Update CLAUDE.md
-- [ ] Reflect new architecture
-- [ ] Update development commands
+- [x] Reflect new architecture
+- [x] Update development commands
 
 ---
 
@@ -228,7 +228,7 @@
 | Phase 5: Init Overhaul | ✅ Complete | Docker/Qdrant auto-setup, plugin install |
 | Phase 6: Legacy Hooks | ⚠️ Partial | Deprecation notice added, full removal deferred |
 | Testing | 🔄 In Progress | Migration tested, plugin testing pending |
-| Documentation | ❌ Not Started | README/CLAUDE.md updates needed |
+| Documentation | ✅ Complete | README, CLAUDE.md, MIGRATION.md updated |
 
 ---
 
