@@ -39,6 +39,49 @@ fn install_plugin() -> Result<()> {
     // Copy plugin directory
     copy_dir_recursive(&plugin_source, &plugin_dest)?;
 
+    // Also install skills to ~/.claude/skills/
+    install_skills(&plugin_source)?;
+
+    Ok(())
+}
+
+/// Get Claude skills directory
+fn get_claude_skills_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".claude")
+        .join("skills")
+}
+
+/// Install AgentMem skills to user skills directory
+fn install_skills(plugin_source: &Path) -> Result<()> {
+    let skills_dir = get_claude_skills_dir();
+    fs::create_dir_all(&skills_dir)?;
+
+    // Install memory-persistence skill
+    let memory_skill_src = plugin_source.join("skills/memory-persistence/SKILL.md");
+    if memory_skill_src.exists() {
+        let memory_skill_dir = skills_dir.join("agentmem-memory");
+        fs::create_dir_all(&memory_skill_dir)?;
+
+        // Read, modify name, and write
+        let content = fs::read_to_string(&memory_skill_src)?;
+        let modified = content.replace("name: memory-persistence", "name: agentmem-memory");
+        fs::write(memory_skill_dir.join("SKILL.md"), modified)?;
+    }
+
+    // Install plan-to-tasks skill
+    let plan_skill_src = plugin_source.join("skills/plan-to-tasks/SKILL.md");
+    if plan_skill_src.exists() {
+        let plan_skill_dir = skills_dir.join("agentmem-plan");
+        fs::create_dir_all(&plan_skill_dir)?;
+
+        // Read, modify name, and write
+        let content = fs::read_to_string(&plan_skill_src)?;
+        let modified = content.replace("name: plan-to-tasks", "name: agentmem-plan");
+        fs::write(plan_skill_dir.join("SKILL.md"), modified)?;
+    }
+
     Ok(())
 }
 
@@ -442,6 +485,7 @@ pub fn run_init(quiet: bool, embedding: Option<String>, model: Option<String>) -
                 Ok(_) => {
                     plugin_installed = true;
                     println!("  {} Installed Claude Code plugin", "✓");
+                    println!("  {} Installed AgentMem skills", "✓");
                 }
                 Err(e) => {
                     println!("  {} Failed to install plugin: {}", "!", e);

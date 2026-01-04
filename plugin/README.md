@@ -15,7 +15,19 @@ claude --plugin-dir /path/to/agentmem/plugin
 ```bash
 # Copy plugin to Claude's plugin directory
 cp -r plugin ~/.claude/plugins/agentmem
+
+# Install skills to user skills directory
+mkdir -p ~/.claude/skills/agentmem-memory
+mkdir -p ~/.claude/skills/agentmem-plan
+cp plugin/skills/memory-persistence/SKILL.md ~/.claude/skills/agentmem-memory/SKILL.md
+cp plugin/skills/plan-to-tasks/SKILL.md ~/.claude/skills/agentmem-plan/SKILL.md
+
+# Update skill names to match directories
+sed -i '' 's/name: memory-persistence/name: agentmem-memory/' ~/.claude/skills/agentmem-memory/SKILL.md
+sed -i '' 's/name: plan-to-tasks/name: agentmem-plan/' ~/.claude/skills/agentmem-plan/SKILL.md
 ```
+
+> **Note**: Skills must be installed to `~/.claude/skills/` (not the plugin directory) for Claude Code to load them.
 
 ## Prerequisites
 
