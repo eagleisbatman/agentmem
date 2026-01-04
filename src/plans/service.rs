@@ -2,6 +2,23 @@ use rusqlite::{params, Connection, Result};
 use crate::db::models::{Plan, PlanTask};
 use chrono::Utc;
 use rand::{distributions::Alphanumeric, Rng};
+use anyhow::Context;
+use serde::{Deserialize, Serialize};
+
+/// Extracted task from plan analysis
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtractedTask {
+    pub title: String,
+    pub description: String,
+    pub priority: i32,
+    pub order: i32,
+}
+
+/// Result of task extraction
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TaskExtractionResult {
+    pub tasks: Vec<ExtractedTask>,
+}
 
 /// Create a new plan
 pub fn create_plan(conn: &Connection, title: &str, content: Option<&str>, file_path: Option<&str>) -> Result<String> {
@@ -174,4 +191,80 @@ pub fn get_active_plan(conn: &Connection) -> Result<Option<Plan>> {
     } else {
         Ok(None)
     }
+}
+
+/// The extraction prompt for plan -> tasks
+const TASK_EXTRACTION_PROMPT: &str = r#"You are a task extraction assistant. Analyze this implementation plan and extract discrete, actionable tasks.
+
+## Rules:
+- Extract clear, specific tasks that can be worked on independently
+- Each task should be completable in one session
+- Include a brief description of what the task involves
+- Assign priority: 1 (high), 2 (medium), 3 (low)
+- Order tasks by logical dependency (what needs to be done first)
+- Focus on implementation tasks, not research or planning
+
+## Output Format (JSON):
+{
+  "tasks": [
+    {
+      "title": "Brief task title (5-10 words)",
+      "description": "What this task involves and acceptance criteria",
+      "priority": 1,
+      "order": 1
+    }
+  ]
+}
+
+If no actionable tasks found, return: {"tasks": []}
+
+## Plan to Analyze:
+"#;
+
+/// Extract tasks from a plan using LLM
+pub async fn extract_tasks_from_plan(
+    plan_content: &str,
+    model: &str,
+) -> anyhow::Result<TaskExtractionResult> {
+    use crate::embedding::openai::chat_completion;
+
+    let user_prompt = format!("{}\n\n{}", TASK_EXTRACTION_PROMPT, plan_content);
+
+    let response = chat_completion(
+        model,
+        "You are a task extraction assistant. Output valid JSON only.",
+        &user_prompt,
+    ).await?;
+
+    // Parse the response
+    parse_task_extraction_response(&response)
+}
+
+/// Parse the GPT response for task extraction
+fn parse_task_extraction_response(response: &str) -> anyhow::Result<TaskExtractionResult> {
+    // Try direct parse first
+    if let Ok(result) = serde_json::from_str::<TaskExtractionResult>(response) {
+        return Ok(result);
+    }
+
+    // Try to extract JSON from markdown code blocks
+    let json_str = if response.contains("```json") {
+        response
+            .split("```json")
+            .nth(1)
+            .and_then(|s| s.split("```").next())
+            .unwrap_or(response)
+            .trim()
+    } else if response.contains("```") {
+        response
+            .split("```")
+            .nth(1)
+            .unwrap_or(response)
+            .trim()
+    } else {
+        response.trim()
+    };
+
+    serde_json::from_str::<TaskExtractionResult>(json_str)
+        .context("Failed to parse task extraction response as JSON")
 }

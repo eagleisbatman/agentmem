@@ -13,7 +13,7 @@ pub mod sync;
 pub mod tasks;
 
 use clap::{Parser, Subcommand};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use crate::init::run_init;
 use crate::config::get_db_path;
 use crate::db::get_connection;
@@ -345,6 +345,24 @@ enum PlanCommands {
     },
     /// Get the active plan
     Active {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Extract tasks from a plan file using LLM
+    ExtractTasks {
+        /// Path to plan file (markdown)
+        #[arg(long)]
+        file: String,
+        /// Plan ID to link tasks to (uses active plan if not specified)
+        #[arg(long)]
+        plan_id: Option<String>,
+        /// LLM model for extraction
+        #[arg(long, default_value = "gpt-4o")]
+        model: String,
+        /// Dry run - show tasks without creating
+        #[arg(long)]
+        dry_run: bool,
+        /// Output as JSON
         #[arg(long)]
         json: bool,
     },
@@ -722,7 +740,7 @@ async fn main() -> Result<()> {
             run_session(command).await?;
         },
         Commands::Plan { command } => {
-            run_plan(command)?;
+            run_plan(command).await?;
         },
         Commands::McpServer => {
             crate::mcp::server::run_server()?;
@@ -1287,7 +1305,7 @@ async fn run_session(command: SessionCommands) -> Result<()> {
 }
 
 /// Run plan commands
-fn run_plan(command: PlanCommands) -> Result<()> {
+async fn run_plan(command: PlanCommands) -> Result<()> {
     let db_path = get_db_path();
     if !db_path.exists() {
         anyhow::bail!("AgentMem not initialized. Run 'am init' first.");
@@ -1363,6 +1381,63 @@ fn run_plan(command: PlanCommands) -> Result<()> {
                 }
             } else {
                 println!("No active plan.");
+            }
+        }
+        PlanCommands::ExtractTasks { file, plan_id, model, dry_run, json } => {
+            // Read plan file
+            let content = std::fs::read_to_string(&file)
+                .context(format!("Failed to read plan file: {}", file))?;
+
+            // Extract tasks using LLM
+            let result = crate::plans::service::extract_tasks_from_plan(&content, &model).await?;
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+                return Ok(());
+            }
+
+            if result.tasks.is_empty() {
+                println!("No tasks extracted from plan.");
+                return Ok(());
+            }
+
+            println!("Extracted {} tasks:", result.tasks.len());
+            for task in &result.tasks {
+                println!("  [P{}] {}: {}", task.priority, task.order, task.title);
+            }
+
+            if dry_run {
+                println!("\n(Dry run - no tasks created)");
+                return Ok(());
+            }
+
+            // Get plan ID to link to
+            let link_plan_id = match plan_id {
+                Some(id) => Some(id),
+                None => crate::plans::service::get_active_plan(&conn)?
+                    .map(|p| p.id),
+            };
+
+            // Create tasks
+            println!("\nCreating tasks...");
+            for task in &result.tasks {
+                let task_id = crate::tasks::service::create_task(
+                    &conn,
+                    &task.title,
+                    Some(&task.description),
+                    task.priority,
+                    "implementation",
+                )?;
+                println!("  Created: {} \"{}\"", task_id, task.title);
+
+                // Link to plan if we have one
+                if let Some(ref pid) = link_plan_id {
+                    crate::plans::service::link_task_to_plan(&conn, pid, &task_id, task.order)?;
+                }
+            }
+
+            if let Some(pid) = link_plan_id {
+                println!("\nLinked to plan: {}", pid);
             }
         }
     }

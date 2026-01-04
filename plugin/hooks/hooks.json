@@ -11,6 +11,17 @@
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|TodoWrite",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ~/.claude/plugins/agentmem/hooks/post-tool-use.js"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "matcher": "*",
