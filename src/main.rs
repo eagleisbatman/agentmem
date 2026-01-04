@@ -17,7 +17,7 @@ use anyhow::{Context, Result};
 use crate::init::run_init;
 use crate::config::get_db_path;
 use crate::db::get_connection;
-use crate::tasks::service::{create_task, list_tasks, get_ready_tasks, claim_task, release_task, get_next_available_task, get_available_tasks};
+use crate::tasks::service::{create_task, list_tasks, get_ready_tasks, claim_task, release_task, get_next_available_task, get_available_tasks, release_all_agent_tasks, release_stale_claims};
 use crate::memory::service::{add_memory_with_embedding, list_memories, add_protected_file, add_tool};
 use crate::sync::{export_to_jsonl, import_from_jsonl, git_sync};
 use crate::retrieval::context::{get_context_async, format_context_markdown};
@@ -213,6 +213,17 @@ enum TaskCommands {
     Available {
         #[arg(long)]
         json: bool,
+    },
+    /// Release all tasks claimed by an agent (session cleanup)
+    ReleaseAll {
+        #[arg(long)]
+        agent: String,
+    },
+    /// Release stale claims (tasks claimed too long ago)
+    CleanupStale {
+        /// Timeout in minutes (default: 30)
+        #[arg(long, default_value_t = 30)]
+        timeout: i64,
     },
 }
 
@@ -543,6 +554,22 @@ async fn main() -> Result<()> {
                                 println!("  [P{}] {}: {}", t.priority, t.id, t.title);
                             }
                         }
+                    }
+                },
+                TaskCommands::ReleaseAll { agent } => {
+                    let count = release_all_agent_tasks(&conn, &agent)?;
+                    if count > 0 {
+                        println!("✓ Released {} task(s) claimed by agent {}", count, agent);
+                    } else {
+                        println!("No tasks claimed by agent {}", agent);
+                    }
+                },
+                TaskCommands::CleanupStale { timeout } => {
+                    let count = release_stale_claims(&conn, timeout)?;
+                    if count > 0 {
+                        println!("✓ Released {} stale claim(s) (older than {} minutes)", count, timeout);
+                    } else {
+                        println!("No stale claims found");
                     }
                 },
             }

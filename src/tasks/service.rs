@@ -286,6 +286,64 @@ pub fn release_task(conn: &Connection, task_id: &str, agent_id: &str) -> Result<
     Ok(true)
 }
 
+/// Release all tasks claimed by an agent (for session cleanup)
+/// Returns the number of tasks released
+pub fn release_all_agent_tasks(conn: &Connection, agent_id: &str) -> Result<usize> {
+    let now = Utc::now();
+
+    // Get tasks claimed by this agent before releasing (for history)
+    let claimed_tasks: Vec<String> = {
+        let mut stmt = conn.prepare("SELECT id FROM tasks WHERE claimed_by = ?1")?;
+        let rows = stmt.query_map(params![agent_id], |row| row.get(0))?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+
+    // Release all at once
+    let rows_affected = conn.execute(
+        "UPDATE tasks SET claimed_by = NULL, claimed_at = NULL, status = 'open', updated_at = ?1
+         WHERE claimed_by = ?2",
+        params![now, agent_id],
+    )?;
+
+    // Record history for each released task
+    for task_id in &claimed_tasks {
+        let _ = record_task_history(conn, task_id, Some("in_progress"), "open", agent_id, Some("Released on session end"));
+    }
+
+    Ok(rows_affected)
+}
+
+/// Release stale claims (tasks claimed more than timeout_minutes ago)
+/// Returns the number of tasks released
+pub fn release_stale_claims(conn: &Connection, timeout_minutes: i64) -> Result<usize> {
+    let now = Utc::now();
+    let cutoff = now - chrono::Duration::minutes(timeout_minutes);
+
+    // Get stale tasks before releasing (for history)
+    let stale_tasks: Vec<(String, String)> = {
+        let mut stmt = conn.prepare(
+            "SELECT id, claimed_by FROM tasks WHERE claimed_by IS NOT NULL AND claimed_at < ?1"
+        )?;
+        let rows = stmt.query_map(params![cutoff], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+
+    // Release all stale claims
+    let rows_affected = conn.execute(
+        "UPDATE tasks SET claimed_by = NULL, claimed_at = NULL, status = 'open', updated_at = ?1
+         WHERE claimed_by IS NOT NULL AND claimed_at < ?2",
+        params![now, cutoff],
+    )?;
+
+    // Record history
+    for (task_id, agent_id) in &stale_tasks {
+        let _ = record_task_history(conn, task_id, Some("in_progress"), "open", agent_id,
+            Some(&format!("Released: stale claim (>{}min)", timeout_minutes)));
+    }
+
+    Ok(rows_affected)
+}
+
 /// Get the next available task (unclaimed, open, highest priority)
 pub fn get_next_available_task(conn: &Connection) -> Result<Option<Task>> {
     let mut stmt = conn.prepare(
