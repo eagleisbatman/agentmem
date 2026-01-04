@@ -1,4 +1,5 @@
 {
+  "description": "AgentMem hooks for persistent memory across sessions",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -6,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ~/.claude/plugins/agentmem/hooks/user-prompt-submit.js"
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/user-prompt-submit.js"
           }
         ]
       }
@@ -17,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ~/.claude/plugins/agentmem/hooks/post-tool-use.js"
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/post-tool-use.js"
           }
         ]
       }
@@ -28,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ~/.claude/plugins/agentmem/hooks/post-session.js"
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/post-session.js"
           }
         ]
       }
