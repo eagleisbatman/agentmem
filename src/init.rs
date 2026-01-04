@@ -253,6 +253,25 @@ fn get_openai_key() -> Option<String> {
     None
 }
 
+/// Validate OpenAI API key by making a test API call
+fn validate_openai_key(key: &str) -> Result<bool> {
+    // Make a simple API call to verify the key works
+    // Using the models endpoint as it's lightweight
+    let output = Command::new("curl")
+        .args([
+            "-s",
+            "-o", "/dev/null",
+            "-w", "%{http_code}",
+            "-H", &format!("Authorization: Bearer {}", key),
+            "https://api.openai.com/v1/models",
+        ])
+        .output()
+        .context("Failed to run curl")?;
+
+    let status_code = String::from_utf8_lossy(&output.stdout);
+    Ok(status_code.trim() == "200")
+}
+
 /// Prompt user for OpenAI API key
 fn prompt_openai_key() -> Result<Option<String>> {
     println!();
@@ -271,8 +290,39 @@ fn prompt_openai_key() -> Result<Option<String>> {
     }
 
     // Validate key format
-    if !key.starts_with("sk-") {
-        println!("Warning: API key doesn't start with 'sk-'. Saving anyway.");
+    if !key.starts_with("sk-") && !key.starts_with("sk-proj-") {
+        println!("  ! Warning: API key format looks unusual (expected 'sk-...')");
+    }
+
+    // Test the key actually works
+    print!("  Validating API key... ");
+    io::stdout().flush()?;
+
+    match validate_openai_key(key) {
+        Ok(true) => {
+            println!("✓ valid");
+        }
+        Ok(false) => {
+            println!("✗ invalid");
+            println!();
+            println!("  The API key was rejected by OpenAI. Please check:");
+            println!("    - The key is copied correctly (no extra spaces)");
+            println!("    - The key hasn't been revoked");
+            println!("    - Your OpenAI account has API access enabled");
+            println!();
+            print!("  Save anyway? [y/N] ");
+            io::stdout().flush()?;
+
+            let mut confirm = String::new();
+            io::stdin().read_line(&mut confirm)?;
+            if !confirm.trim().to_lowercase().starts_with('y') {
+                return Ok(None);
+            }
+        }
+        Err(e) => {
+            println!("? could not verify ({})", e);
+            println!("  Saving key anyway - will be tested on first use.");
+        }
     }
 
     // Save to credentials file

@@ -995,7 +995,7 @@ async fn run_doctor(json_output: bool) -> Result<()> {
             if qdrant_running { "✓" } else { "✗" });
     }
 
-    // Check 6: OpenAI API key
+    // Check 6: OpenAI API key (with validation)
     let openai_key = std::env::var("OPENAI_API_KEY").ok()
         .or_else(|| {
             let creds_path = dirs::home_dir()?.join(".agentmem").join("credentials");
@@ -1007,14 +1007,51 @@ async fn run_doctor(json_output: bool) -> Result<()> {
                 })
         });
     let has_openai = openai_key.as_ref().map(|k| !k.is_empty()).unwrap_or(false);
+
+    // Validate the key if present
+    let openai_valid = if has_openai {
+        if let Some(ref key) = openai_key {
+            // Quick validation via curl
+            Command::new("curl")
+                .args(["-s", "-o", "/dev/null", "-w", "%{http_code}",
+                       "-H", &format!("Authorization: Bearer {}", key),
+                       "https://api.openai.com/v1/models"])
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "200")
+                .unwrap_or(false)
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    let openai_status = if !has_openai {
+        "missing"
+    } else if openai_valid {
+        "ok"
+    } else {
+        "invalid"
+    };
+
     checks.push(HealthCheck {
         component: "OpenAI API key".to_string(),
-        status: if has_openai { "ok" } else { "missing" }.to_string(),
-        details: if has_openai { Some("configured".to_string()) } else { None },
+        status: openai_status.to_string(),
+        details: if has_openai { Some(if openai_valid { "valid" } else { "configured but invalid" }.to_string()) } else { None },
     });
     if !json_output {
-        println!("  {} OpenAI API key",
-            if has_openai { "✓" } else { "✗" });
+        let symbol = match openai_status {
+            "ok" => "✓",
+            "invalid" => "!",
+            _ => "✗",
+        };
+        let detail = match openai_status {
+            "ok" => "",
+            "invalid" => " (invalid - check key)",
+            _ => "",
+        };
+        println!("  {} OpenAI API key{}",
+            symbol, detail);
     }
 
     // Check 7: Claude Code plugin
@@ -1056,7 +1093,7 @@ async fn run_doctor(json_output: bool) -> Result<()> {
 
     // Summary with detailed fix instructions
     let core_ok = am_exists && db_exists;
-    let semantic_ok = qdrant_running && has_openai;
+    let semantic_ok = qdrant_running && openai_valid;
     let all_ok = core_ok && semantic_ok && plugin_installed;
 
     if json_output {
@@ -1117,6 +1154,10 @@ async fn run_doctor(json_output: bool) -> Result<()> {
             fixes.push(("OpenAI API key missing",
                 "export OPENAI_API_KEY='sk-...'",
                 "Or run 'am init' to save permanently"));
+        } else if !openai_valid {
+            fixes.push(("OpenAI API key invalid",
+                "am init",
+                "Re-run init to enter a new API key"));
         }
 
         if !fixes.is_empty() {
