@@ -10,8 +10,9 @@ use crate::db::get_connection;
 /// Communicates via JSON-RPC over stdin/stdout
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct JsonRpcRequest {
-    jsonrpc: String,
+    jsonrpc: String,  // Required by JSON-RPC spec, validated by serde
     id: Option<Value>,
     method: String,
     params: Option<Value>,

@@ -1149,6 +1149,18 @@ async fn run_session(command: SessionCommands) -> Result<()> {
             }
             return Ok(());
         }
+        SessionCommands::End { .. } => {
+            // End local session first
+            let db_path = get_db_path();
+            if db_path.exists() {
+                let conn = get_connection(db_path)?;
+                if let Some(session) = crate::sessions::service::get_active_session(&conn)? {
+                    crate::sessions::service::end_session(&conn, &session.id, None)?;
+                    println!("Local session ended: {}", session.id);
+                }
+            }
+            // Continue to cloud session end if authenticated
+        }
         _ => {} // Continue to cloud commands
     }
 

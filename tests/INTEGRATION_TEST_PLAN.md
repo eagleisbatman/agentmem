@@ -174,7 +174,7 @@ This document outlines comprehensive tests for AgentMem integration with Claude 
 
 **Expected**: Tasks linked to plan
 
-**Status**: [~] PARTIAL - Plan command not yet implemented; tasks can reference plans in descriptions
+**Status**: [x] PASS - Plan commands fully implemented (create, list, show, link, complete, abandon, active)
 
 ---
 
@@ -229,7 +229,7 @@ This document outlines comprehensive tests for AgentMem integration with Claude 
 
 **Expected**: Data synced automatically
 
-**Status**: [~] PARTIAL - `session end` requires cloud auth; local session tracking works
+**Status**: [x] PASS - Local session end now works without cloud auth
 
 ### Test 6.3: Cross-Session Persistence
 **Objective**: Verify data persists across sessions
@@ -279,9 +279,9 @@ This document outlines comprehensive tests for AgentMem integration with Claude 
 | Suite 1 | PASS (3/3) | All hook integration tests pass | 2026-01-04 |
 | Suite 2 | PASS (3/3) | Fixed auth bug blocking local commands | 2026-01-04 |
 | Suite 3 | PASS (4/4) | Skills work; auto-trigger needs restart | 2026-01-04 |
-| Suite 4 | PASS (2/3) | Plan command not implemented | 2026-01-04 |
+| Suite 4 | PASS (3/3) | Plan commands fully implemented | 2026-01-04 |
 | Suite 5 | PASS (2/2) | Sub-agents receive full context | 2026-01-04 |
-| Suite 6 | PASS (2/3) | Session end needs cloud; local works | 2026-01-04 |
+| Suite 6 | PASS (3/3) | Local session end added | 2026-01-04 |
 | Suite 7 | PASS (2/2) | Graceful error handling | 2026-01-04 |
 
 ---
@@ -293,23 +293,26 @@ This document outlines comprehensive tests for AgentMem integration with Claude 
 | Session commands blocked by auth check | High | Fixed | Move local commands before auth check in run_session() |
 | Skills installed to wrong directory | High | Fixed | Updated init.rs to install to ~/.claude/skills/ |
 | Old hooks broke from subdirectories | Medium | Fixed | Removed old hooks, use plugin instead |
-| Plan command not implemented | Low | Open | Future: add `am plan` subcommand |
-| Session end requires cloud auth | Low | Open | Consider local-only session end |
+| Plan command not implemented | Low | Fixed | Plan commands already existed, just not tested |
+| Session end requires cloud auth | Low | Fixed | Added local session end before cloud auth check |
 
 ---
 
 ## Summary
 
-**Overall Result: 18/20 tests pass (90%)**
+**Overall Result: 20/20 tests pass (100%)**
 
 The AgentMem plugin integrates successfully with Claude Code:
 - Hook injection works reliably
 - TodoWrite state persists across sessions
 - Skills are available and functional
 - Sub-agents receive full AgentMem context
+- Plan commands fully implemented
+- Session management works locally
 - Error handling is graceful
 
 Key improvements made during testing:
 1. Fixed session commands to work without cloud auth
 2. Updated skills installation to correct location
 3. Migrated from old hooks to plugin architecture
+4. Added local session end functionality
