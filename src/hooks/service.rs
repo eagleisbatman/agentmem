@@ -100,6 +100,15 @@ pub fn install_hooks(agent: &str) -> Result<()> {
 // =============================================================================
 
 fn install_claude_code_hooks() -> Result<()> {
+    // Note: As of AgentMem 2.0, the preferred method is the Claude Code plugin.
+    // This legacy hook installation is kept for backward compatibility.
+    // Users should run `am init` to install the plugin instead.
+    println!();
+    println!("Note: AgentMem 2.0 includes a Claude Code plugin (recommended).");
+    println!("      Run 'am init' to install the plugin for better integration.");
+    println!();
+    println!("Installing legacy hooks...");
+
     let hooks_dir = get_agentmem_dir().join("hooks");
     fs::create_dir_all(&hooks_dir)?;
 

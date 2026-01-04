@@ -1,7 +1,7 @@
 use std::fs;
 use std::io::{self, Write};
 use std::process::Command;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use anyhow::{Result, Context};
 use crate::config::{Config, get_agentmem_dir, get_config_path, get_db_path, save_config};
 use crate::db::get_connection;
@@ -11,6 +11,82 @@ fn get_global_config_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".agentmem")
+}
+
+/// Claude Code plugins directory
+fn get_claude_plugins_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".claude")
+        .join("plugins")
+}
+
+/// Check if AgentMem plugin is installed in Claude Code
+fn is_plugin_installed() -> bool {
+    get_claude_plugins_dir().join("agentmem").exists()
+}
+
+/// Install AgentMem plugin to Claude Code plugins directory
+fn install_plugin() -> Result<()> {
+    let plugin_dest = get_claude_plugins_dir().join("agentmem");
+
+    // Find plugin source - could be in current dir or relative to binary
+    let plugin_source = find_plugin_source()?;
+
+    // Create plugins directory if needed
+    fs::create_dir_all(get_claude_plugins_dir())?;
+
+    // Copy plugin directory
+    copy_dir_recursive(&plugin_source, &plugin_dest)?;
+
+    Ok(())
+}
+
+/// Find the plugin source directory
+fn find_plugin_source() -> Result<PathBuf> {
+    // Check relative to current directory (for development)
+    let dev_path = PathBuf::from("plugin");
+    if dev_path.exists() && dev_path.join(".claude-plugin").exists() {
+        return Ok(dev_path);
+    }
+
+    // Check relative to binary location (for installed version)
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let installed_path = exe_dir.join("plugin");
+            if installed_path.exists() {
+                return Ok(installed_path);
+            }
+            // Also check ../share/agentmem/plugin for system installs
+            let share_path = exe_dir.join("../share/agentmem/plugin");
+            if share_path.exists() {
+                return Ok(share_path);
+            }
+        }
+    }
+
+    anyhow::bail!("Plugin source not found. Run from AgentMem directory or ensure plugin is installed.")
+}
+
+/// Recursively copy a directory
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
+    if dst.exists() {
+        fs::remove_dir_all(dst)?;
+    }
+    fs::create_dir_all(dst)?;
+
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
 }
 
 /// Global credentials file path
@@ -347,23 +423,59 @@ pub fn run_init(quiet: bool, embedding: Option<String>, model: Option<String>) -
         fs::write(&jsonl_path, "").context("Failed to create agentmem.jsonl")?;
     }
 
-    // Step 6: Print success message
+    // Step 6: Install Claude Code plugin
+    let mut plugin_installed = is_plugin_installed();
+    if !quiet && !plugin_installed {
+        println!();
+        if prompt_yes_no("Install AgentMem plugin for Claude Code?", true) {
+            match install_plugin() {
+                Ok(_) => {
+                    plugin_installed = true;
+                    println!("  {} Installed Claude Code plugin", "✓");
+                }
+                Err(e) => {
+                    println!("  {} Failed to install plugin: {}", "!", e);
+                    println!("    You can install manually: cp -r plugin ~/.claude/plugins/agentmem");
+                }
+            }
+        }
+    } else if plugin_installed && !quiet {
+        println!("  {} Claude Code plugin already installed", "✓");
+    }
+
+    // Step 7: Print success message
     if !quiet {
         println!();
         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
         println!("  AgentMem initialized successfully!");
         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
         println!();
-        println!("  Next steps:");
-        println!();
-        println!("  1. Install hooks for your AI agent:");
-        println!("     am hook install claude-code");
-        println!();
-        println!("  2. Add your first memory:");
-        println!("     am mem add decision \"Use PostgreSQL\" --content \"For JSON support\"");
-        println!();
-        println!("  3. Check system health:");
-        println!("     am doctor");
+
+        if plugin_installed {
+            println!("  Claude Code plugin is installed!");
+            println!("  AgentMem will automatically:");
+            println!("    - Inject context before each prompt");
+            println!("    - Sync data when sessions end");
+            println!();
+            println!("  Available commands:");
+            println!("    /agentmem:remember <type> <title> - Add a memory");
+            println!("    /agentmem:protect <file>          - Protect a file");
+            println!("    /agentmem:context                 - Show current context");
+            println!("    /agentmem:sync                    - Sync to git");
+            println!();
+        } else {
+            println!("  Next steps:");
+            println!();
+            println!("  1. Install hooks for your AI agent:");
+            println!("     am hook install claude-code");
+            println!();
+        }
+
+        println!("  CLI commands:");
+        println!("    am mem add decision \"Title\" --content \"Details\"");
+        println!("    am task create \"Task title\"");
+        println!("    am context --query \"search term\"");
+        println!("    am doctor");
         println!();
 
         if !qdrant_running {
