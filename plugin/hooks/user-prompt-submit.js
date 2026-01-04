@@ -84,7 +84,13 @@ process.stdin.on('end', () => {
 
     // Get relevant context based on prompt
     try {
-      const escapedPrompt = prompt.replace(/"/g, '\\"').replace(/`/g, '\\`').substring(0, 500);
+      const escapedPrompt = prompt
+        .replace(/\\/g, '\\\\')   // Escape backslashes first
+        .replace(/"/g, '\\"')     // Escape double quotes
+        .replace(/`/g, '\\`')     // Escape backticks
+        .replace(/\$/g, '\\$')    // Escape dollar signs (prevents $HOME, $(cmd) expansion)
+        .replace(/!/g, '\\!')     // Escape history expansion
+        .substring(0, 500);
       const context = execSync(`am context --query "${escapedPrompt}" --format markdown`, {
         encoding: 'utf-8',
         timeout: 5000,

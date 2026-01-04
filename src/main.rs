@@ -491,22 +491,42 @@ async fn main() -> Result<()> {
                     }
                 },
                 TaskCommands::Next { agent, json } => {
-                    if let Some(task) = get_next_available_task(&conn)? {
-                        // Claim the task
-                        claim_task(&conn, &task.id, &agent)?;
-                        if json {
-                            println!("{}", serde_json::to_string_pretty(&task)?);
-                        } else {
-                            println!("✓ Claimed task: {} \"{}\"", task.id, task.title);
-                            if let Some(d) = &task.description {
-                                println!("  Description: {}", d);
+                    // Retry loop to handle race conditions
+                    let mut attempts = 0;
+                    const MAX_ATTEMPTS: u32 = 5;
+
+                    loop {
+                        attempts += 1;
+                        if let Some(task) = get_next_available_task(&conn)? {
+                            // Try to claim the task - may fail if another agent claimed it first
+                            if claim_task(&conn, &task.id, &agent)? {
+                                if json {
+                                    println!("{}", serde_json::to_string_pretty(&task)?);
+                                } else {
+                                    println!("✓ Claimed task: {} \"{}\"", task.id, task.title);
+                                    if let Some(d) = &task.description {
+                                        println!("  Description: {}", d);
+                                    }
+                                }
+                                break;
+                            } else if attempts >= MAX_ATTEMPTS {
+                                // All attempts failed due to race conditions
+                                if json {
+                                    println!("null");
+                                } else {
+                                    println!("✗ Failed to claim any task after {} attempts (high contention)", attempts);
+                                }
+                                break;
                             }
-                        }
-                    } else {
-                        if json {
-                            println!("null");
+                            // Race condition - another agent claimed it, retry with next available
                         } else {
-                            println!("No available tasks");
+                            // No tasks available
+                            if json {
+                                println!("null");
+                            } else {
+                                println!("No available tasks");
+                            }
+                            break;
                         }
                     }
                 },
